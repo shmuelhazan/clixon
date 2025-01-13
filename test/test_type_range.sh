@@ -103,6 +103,7 @@ module example{
    }
    leaf lstring {
        type tstring;
+       default "somestring";
    }
   /* here follows unlimited ints */
    leaf rint8 {
@@ -165,6 +166,7 @@ cat <<EOF > $dclispec/clispec.cli
    merge @datamodel, cli_merge();
    create @datamodel, cli_create();
    show, cli_show_config("candidate", "text");
+   validate("Validate changes"), cli_validate();
    quit("Quit"), cli_quit();
 EOF
 
@@ -177,8 +179,8 @@ cat <<EOF > $cfg
   <CLICON_CLISPEC_DIR>$dclispec</CLICON_CLISPEC_DIR>
   <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>/usr/local/var/$APPNAME</CLICON_XMLDB_DIR>
   <CLICON_XMLDB_FORMAT>$format</CLICON_XMLDB_FORMAT>
 </clixon-config>
@@ -211,10 +213,11 @@ function testbuiltin(){
 }
 
 # Type explicit typed range tests.
-# Parameters: 1: type (eg uint8)
-#             2: val OK
-#             3: eval Invalid value
-#             4: post (eg .000 - special for decimal64, others should have "")
+# Parameters:
+# 1: type (eg uint8)
+# 2: val OK
+# 3: eval Invalid value
+# 4: post (eg .000 - special for decimal64, others should have "")
 function testrange(){
     t=$1
     val=$2
@@ -317,6 +320,13 @@ testrange decimal64 1 0 ".000"
 # test string with lengthlimit
 testrange string "012" "01234567890" ""
 
+# see https://github.com/clicon/clixon/issues/563
+new "Netconf set empty string with 1.. range"
+expectpart "$($clixon_cli -1f $cfg -l o set lstring \"\")" 0 ""
+
+new "Validate expect fail"
+expectpart "$($clixon_cli -1f $cfg -l o validate)" 255 "String length 0 out of range: 1 - 10"
+
 if [ $BE -ne 0 ]; then
     new "Kill backend"
     # Check if premature kill
@@ -329,9 +339,6 @@ if [ $BE -ne 0 ]; then
 fi
 
 rm -rf $dir
-
-# unset conditional parameters 
-unset format
 
 new "endtest"
 endtest

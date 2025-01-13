@@ -42,26 +42,24 @@ RUN apk add --update git make build-base gcc flex bison curl-dev
 # For netsnmp
 RUN apk add --update net-snmp net-snmp-dev
 
-WORKDIR /usr/local/share
+# For groupadd/groupdel
+RUN apk add --update shadow
+
+# Test-specific (for test scripts)
+RUN apk add --update openssh
 
 # Checkout standard YANG models for tests (note >1G for full repo)
-RUN mkdir yang
-
+RUN mkdir -p /usr/local/share/yang
 WORKDIR /usr/local/share/yang
+COPY yang .
 
-RUN git config --global init.defaultBranch master
-RUN git init;
-RUN git remote add -f origin https://github.com/YangModels/yang;
-RUN git config core.sparseCheckout true
-RUN echo "standard/" >> .git/info/sparse-checkout
-RUN echo "experimental/" >> .git/info/sparse-checkout
-
-WORKDIR /usr/local/share/yang
-RUN git pull origin main
+# Checkout OPENCONFIG YANG models for tests
+RUN mkdir -p /usr/local/share/openconfig
+WORKDIR /usr/local/share/openconfig
+COPY openconfig .
 
 # Create a directory to hold source-code, dependencies etc
-RUN mkdir /clixon
-RUN mkdir /clixon/build
+RUN mkdir -p /clixon/build
 WORKDIR /clixon
 
 # Clone cligen
@@ -69,42 +67,50 @@ RUN git clone https://github.com/clicon/cligen.git
 
 # Build cligen
 WORKDIR /clixon/cligen
-RUN ./configure --prefix=/clixon/build
+RUN ./configure --prefix=/usr/local --sysconfdir=/etc
 RUN make
-RUN make install
+RUN make DESTDIR=/clixon/build install
 
 # Copy Clixon from local dir
-RUN mkdir /clixon/clixon
+RUN mkdir -p /clixon/clixon
 WORKDIR /clixon/clixon
 COPY clixon .
 
 # Configure, build and install clixon
-RUN ./configure --prefix=/clixon/build --with-cligen=/clixon/build --without-restconf --with-yang-standard-dir=/usr/local/share/yang/standard --enable-netsnmp --with-mib-generated-yang-dir=/usr/local/share/mib-yangs/
+RUN ./configure --prefix=/usr/local --sysconfdir=/etc --with-cligen=/clixon/build/usr/local --with-yang-standard-dir=/usr/local/share/yang/standard --enable-netsnmp --with-mib-generated-yang-dir=/usr/local/share/mib-yangs/ -without-restconf
 RUN make
-RUN make install
+RUN make DESTDIR=/clixon/build install
 
-# Install utils (for tests)
-WORKDIR /clixon/clixon/util
+# Configure, build and install clixon utilities (for tests)
+WORKDIR /clixon
+RUN git clone https://github.com/clicon/clixon-util.git
+WORKDIR /clixon/clixon-util
+RUN ./configure --prefix=/usr/local --with-cligen=/clixon/build/usr/local --with-clixon=/clixon/build/usr/local
 RUN make
-RUN make install
+RUN make DESTDIR=/clixon/build install
 
 # Build and install the clixon example
 WORKDIR /clixon/clixon/example/main
 RUN make
-RUN make install
+RUN make DESTDIR=/clixon/build install
+RUN mkdir -p /clixon/build/etc
 RUN install example.xml /clixon/build/etc/clixon.xml
 
 # Copy tests
 WORKDIR /clixon/clixon/test
-RUN install -d /clixon/build/bin/test
-RUN install *.sh /clixon/build/bin/test
-RUN install *.exp /clixon/build/bin/test
-RUN install clixon.png /clixon/build/bin/test
+RUN install -d /clixon/build/usr/local/bin/test
+RUN install *.sh /clixon/build/usr/local/bin/test
+RUN install *.exp /clixon/build/usr/local/bin/test
+RUN install clixon.png /clixon/build/usr/local/bin/test
+RUN install *.supp /clixon/build/usr/local/bin/test
+
+RUN install -d /clixon/build/mibs
+RUN install mibs/* /clixon/build/mibs
 
 # Copy startscript
 WORKDIR /clixon
 COPY startsystem.sh startsystem.sh 
-RUN install startsystem.sh /clixon/build/bin/
+RUN install startsystem.sh /clixon/build/usr/local/bin/
 
 # Add our generated YANG files
 RUN git clone https://github.com/clicon/mib-yangs.git /usr/local/share/mib-yangs
@@ -113,7 +119,7 @@ RUN git clone https://github.com/clicon/mib-yangs.git /usr/local/share/mib-yangs
 # Stage 2
 # The second step skips the development environment and builds a runtime system
 FROM alpine
-MAINTAINER Olof Hagsand <olof@hagsand.se>
+LABEL maintainer="Olof Hagsand <olof@hagsand.se>"
 
 # For clixon and cligen
 RUN apk add --update flex bison fcgi-dev
@@ -127,16 +133,20 @@ RUN echo "agentaddress  127.0.0.1" >> /etc/snmp/snmpd.conf
 RUN echo "rwcommunity   public  localhost" >> /etc/snmp/snmpd.conf
 RUN echo "agentXSocket  unix:/var/run/snmp.sock" >> /etc/snmp/snmpd.conf
 RUN echo "agentxperms   777 777" >> /etc/snmp/snmpd.conf
+RUN echo "trap2sink     localhost public 162" >> /etc/snmp/snmpd.conf
+RUN echo "disableAuthorization yes" >> /etc/snmp/snmptrapd.conf
 
 # Test-specific (for test scripts)
-RUN apk add --update sudo curl procps grep make bash expect
+RUN apk add --update sudo curl procps grep make bash expect openssh coreutils
 
 # Create clicon user and group
 RUN adduser -D -H clicon
 
-COPY --from=0 /clixon/build/ /usr/local/
+COPY --from=0 /clixon/build/ /
 COPY --from=0 /usr/local/share/yang/ /usr/local/share/yang/
+COPY --from=0 /usr/local/share/openconfig/* /usr/local/share/openconfig/
 COPY --from=0 /usr/local/share/mib-yangs/* /usr/local/share/mib-yangs/
+COPY --from=0 /clixon/build/mibs/* /usr/share/snmp/mibs/
 
 # Log to stderr.
 CMD /usr/local/bin/startsystem.sh

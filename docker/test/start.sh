@@ -50,6 +50,8 @@ err(){
 # Turn on debug in containers (restconf, backend)
 DBG=${DBG:-0}
 
+NAME=${NAME:-"clixon-test"}
+
 # Expose other host port than port 80
 PORT=${PORT:-8080}
 
@@ -57,7 +59,6 @@ SPORT=${SPORT:-8443}
 
 # Initial running datastore content (other than empty)
 STORE=${STORE:-}
-
 CONFIG0=$(cat <<EOF
 <clixon-config xmlns="http://clicon.org/config">
   <CLICON_CONFIGFILE>/usr/local/etc/example.xml</CLICON_CONFIGFILE>
@@ -84,9 +85,9 @@ EOF
 
 CONFIG=${CONFIG:-$CONFIG0}
 
-# Start clixon-example backend
->&2 echo -n "Starting Backend..."
-sudo docker run -p $PORT:80 -p $SPORT:443 --name clixon-test --rm -e DBG=$DBG -e CONFIG="$CONFIG" -e STORE="$STORE" -td clixon/clixon-test || err "Error starting clixon-test"
+# Create clixon-test container
+>&2 echo -n "Starting Container..."
+sudo docker run -p $PORT:80 -p $SPORT:443 --name ${NAME} --rm -e DBG=$DBG -e CONFIG="$CONFIG" -e STORE="$STORE" -td clixon/clixon-test || err "Error starting clixon-test"
 
 # Wait for snmpd to start
 sudo docker exec -t clixon-test bash -c 'while [ ! -S /var/run/snmp.sock ]; do sleep 1; done'

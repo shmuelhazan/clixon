@@ -5,7 +5,7 @@
   * [Compile and run](#compile)
   * [Using the CLI](#using-the-cli)
   * [Using netconf](#using-netconf)
-  * [Streams](#streams)
+  * [Event Streams](#event-streams)
   * [RPC Operations](#rpc-operations)
   * [State data](#state-data)
   * [Extensions](#extension)
@@ -13,6 +13,7 @@
   * [Systemd](#systemd)
   * [Docker](#docker)
   * [Plugins](#plugins)
+  * [Mount-points](#mount-points)
 
 ## Background
 
@@ -70,19 +71,20 @@ If elsewhere, use `./configure --with-yang-standard-dir=DIR`. Example to checkou
 
 Start backend:
 ```
-    sudo clixon_backend -f /usr/local/etc/example.xml -s init
+    sudo clixon_backend -f /usr/local/etc/clixon/example.xml -s init
 ```
 Start cli:
 ```
-    clixon_cli -f /usr/local/etc/example.xml
+    clixon_cli -f /usr/local/etc/clixon/example.xml
 ```
 Send netconf command:
 ```
-    clixon_netconf -f /usr/local/etc/example.xml
+    clixon_netconf -f /usr/local/etc/clixon/example.xml
 ```
 Start clixon restconf daemon (default config listens on http IPv4 0.0.0.0 on port 8080):
+(Warning: starting the native restconf daemon opens ports that may make your system less secure)
 ```
-    sudo clixon_restconf -f /usr/local/etc/example.xml
+    sudo clixon_restconf -f /usr/local/etc/clixon/example.xml
 ```
 Send restconf command
 ```
@@ -96,20 +98,31 @@ There are also many other commands available as examples. View the source file (
 
 The following example shows how to add an interface in candidate, validate and commit it to running, then look at it (as xml) and finally delete it.
 ```
-clixon_cli -f /usr/local/etc/example.xml 
-cli> set table parameter a ?
+clixon_cli -f /usr/local/etc/clixon/example.xml 
+cli> merge table parameter a ?
   <cr>
   value   
-cli> set table parameter a value 42
+cli> merge table parameter a value 42
 cli> validate 
 cli> commit 
-cli> show configuration xml 
+cli> show configuration
 <table xmlns="urn:example:clixon">
    <parameter>
       <name>a</name>
       <value>42</value>
    </parameter>
 </table>
+cli> show configuration | show json
+{
+   "clixon-example:table": {
+      "parameter": [
+         {
+            "name": "a",
+            "value": "42"
+         }
+      ]
+   }
+}
 cli> delete interfaces interface eth1table parameter a
 cli> commit
 ```
@@ -118,7 +131,7 @@ cli> commit
 
 The following example shows how to set data using netconf (Use `-0` for EOM framing that can be used in shell):
 ```
-sh> clixon_netconf -qf /usr/local/etc/example.xml
+sh> clixon_netconf -qf /usr/local/etc/clixon/example.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities><capability>urn:ietf:params:netconf:base:1.0</capability></capabilities></hello>]]>]]>
 <rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="0">
@@ -245,14 +258,14 @@ Start nginx daemon
 
 Start the clixon restconf daemon
 ```
-   sudo /usr/local/sbin/clixon_restconf -f /usr/local/etc/example.xml
+   sudo /usr/local/sbin/clixon_restconf -f /usr/local/etc/clixon/example.xml
 ```
 then access using curl or wget:
 ```
    curl -X GET http://127.0.0.1/restconf/data/clixon-example:table/parameter=a/value
 ```
 
-## Streams
+## Event streams
 
 The example has an EXAMPLE stream notification triggering every 5s. To start a notification 
 stream in the session using netconf, create a subscription:
@@ -264,7 +277,7 @@ stream in the session using netconf, create a subscription:
 ```
 This can also be triggered via the CLI:
 ```
-clixon_cli -f /usr/local/etc/example.xml
+clixon_cli -f /usr/local/etc/clixon/example.xml
 cli> notify
 cli> event-class fault;
 reportingEntity {
@@ -286,19 +299,19 @@ not recommended . The example includes an example:
 
 Example using CLI:
 ```
-clixon_cli -f /usr/local/etc/example.xml
+clixon_cli -f /usr/local/etc/clixon/example.xml
 cli> rpc ipv4
 <rpc-reply><x xmlns="urn:example:clixon">ipv4</x><y xmlns="urn:example:clixon">42</y></rpc-reply>
 ```
 Example using Netconf:
 ```
-clixon_netconf -qf /usr/local/etc/example.xml
+clixon_netconf -qf /usr/local/etc/clixon/example.xml
 <rpc xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><example xmlns="urn:example:clixon"><x>ipv4</x></example></rpc>]]>]]>
 <rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><x xmlns="urn:example:clixon">ipv4</x><y xmlns="urn:example:clixon">42</y></rpc-reply>]]>]]>
 ```
 Restconf (assuming nginx started):
 ```
-sudo /usr/local/sbin/clixon_restconf -f /usr/local/etc/example.xml
+sudo /usr/local/sbin/clixon_restconf -f /usr/local/etc/clixon/example.xml
 curl -X POST  http://localhost/restconf/operations/clixon-example:example -H "Content-Type: application/yang-data+json" -d '{"clixon-example:input":{"x":"ipv4"}}'
 {
   "clixon-example:output": {
@@ -325,7 +338,7 @@ In the CLI a netconf rpc call is constructed and sent to the backend: See `examp
 The clixon backend  plugin [example_backend.c] reveives the netconf call and replies. This is made byregistering a callback handling handling the RPC:
 ```
 static int 
-example_rpc(clicon_handle h, 
+example_rpc(clixon_handle h, 
             cxobj        *xe,           /* Request: <rpc><xn></rpc> */
             cbuf         *cbret,        /* Reply eg <rpc-reply>... */
             void         *arg,          /* Client session */
@@ -335,7 +348,7 @@ example_rpc(clicon_handle h,
     return 0;
 }
 int
-clixon_plugin_init(clicon_handle h)
+clixon_plugin_init(clixon_handle h)
 {
 ...
    rpc_callback_register(h, example_rpc, NULL, "example");
@@ -425,7 +438,7 @@ static clixon_plugin_api api = {
 };
 
 clixon_plugin_api *
-clixon_plugin_init(clicon_handle h)
+clixon_plugin_init(clixon_handle h)
 {
     /* Optional callback registration for RPC calls */
     rpc_callback_register(h, example_rpc, NULL, "example");
@@ -446,3 +459,28 @@ static clixon_plugin_api api = {
     .ca_interrupt=NULL, /* cligen_interrupt_cb_t */
 };
 ```
+
+## Mount-points
+
+You can set-up the example for a simple RFC 8528 Yang schema mount. A single top-level yang can be defined to be mounted.:
+
+1. Enable CLICON_YANG_SCHEMA_MOUNT
+2. Define the mount-point using the ietf-yang-schema-mount mount-point extension
+3. Start the backend, cli and restconf with `-- -m <name> -M <urn>`, where `name` and `urn` is the name and namespace of the mounted YANG, respectively.
+4. Note that the module-set name is hard-coded to "mylabel". If you support isolated domains this must be changed.
+
+A simple example on how to define a mount-point
+```
+   import ietf-yang-schema-mount {
+      prefix yangmnt;
+   }
+   container root{
+      presence "Otherwise root is not visible";
+      yangmnt:mount-point "mylabel"{
+         description "Root for other yang models";
+      }
+   }
+```
+
+CLI completion of the mounted part is not implemented in the example, see the
+clixon-controller `controller_cligen_treeref_wrap()` for an example.

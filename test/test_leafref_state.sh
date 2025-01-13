@@ -35,9 +35,9 @@ cat <<EOF > $cfg
   <CLICON_CLISPEC_DIR>/usr/local/lib/$APPNAME/clispec</CLICON_CLISPEC_DIR>
   <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
   <CLICON_YANG_LIBRARY>false</CLICON_YANG_LIBRARY>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>/usr/local/var/$APPNAME</CLICON_XMLDB_DIR>
   <CLICON_VALIDATE_STATE_XML>true</CLICON_VALIDATE_STATE_XML>
   <CLICON_STREAM_DISCOVERY_RFC8040>false</CLICON_STREAM_DISCOVERY_RFC8040>
@@ -185,7 +185,7 @@ EOF
 
 # delete x, add y
 XML=$(cat <<EOF
-   <sender-config xmlns="urn:example:example" xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0" nc:operation="delete">
+   <sender-config xmlns="urn:example:example" xmlns:nc="${BASENS}" nc:operation="delete">
       <name>x</name>
    </sender-config>
    <sender-config xmlns="urn:example:example">
@@ -202,10 +202,10 @@ expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS>
 
 # Leafref wrong internal: state references x but config contains only y
 new "netconf get / config+state should fail"
-expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get content=\"all\"><filter type=\"xpath\" select=\"/\"/></get></rpc>" "<rpc-reply $DEFAULTNS><rpc-error><error-type>application</error-type><error-tag>operation-failed</error-tag><error-info><bad-element>x</bad-element></error-info><error-severity>error</error-severity><error-message>Leafref validation failed: No leaf x matching path /ex:sender-config/ex:name in leafref.yang:[0-9]*. Internal error, state callback returned invalid XML</error-message></rpc-error></rpc-reply>" ""
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get content=\"all\"><filter type=\"xpath\" select=\"/\"/></get></rpc>" "<rpc-reply $DEFAULTNS><rpc-error><error-type>application</error-type><error-tag>operation-failed</error-tag><error-app-tag>instance-required</error-app-tag><error-path>/ex:sender-config/ex:name</error-path><error-info>x</error-info><error-severity>error</error-severity></rpc-error></rpc-reply>" ""
 
 new "netconf get / state-only should fail"
-expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get content=\"nonconfig\"><filter type=\"xpath\" select=\"/\"/></get></rpc>" "<rpc-reply $DEFAULTNS><rpc-error><error-type>application</error-type><error-tag>operation-failed</error-tag><error-info><bad-element>x</bad-element></error-info><error-severity>error</error-severity><error-message>Leafref validation failed: No leaf x matching path /ex:sender-config/ex:name in leafref.yang:[0-9]*. Internal error, state callback returned invalid XML</error-message></rpc-error></rpc-reply>" ""
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get content=\"nonconfig\"><filter type=\"xpath\" select=\"/\"/></get></rpc>" "<rpc-reply $DEFAULTNS><rpc-error><error-type>application</error-type><error-tag>operation-failed</error-tag><error-app-tag>instance-required</error-app-tag><error-path>/ex:sender-config/ex:name</error-path><error-info>x</error-info><error-severity>error</error-severity></rpc-error></rpc-reply>" ""
 
 new "netconf get / config-only ok"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get content=\"config\"><filter type=\"xpath\" select=\"/\"/></get></rpc>" "" "<rpc-reply $DEFAULTNS><data><sender-config xmlns=\"urn:example:example\"><name>y</name></sender-config></data></rpc-reply>"

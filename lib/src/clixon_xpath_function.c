@@ -32,7 +32,7 @@
 
   ***** END LICENSE BLOCK *****
 
- * Clixon XML XPATH 1.0 according to https://www.w3.org/TR/xpath-10
+ * Clixon XML XPath 1.0 according to https://www.w3.org/TR/xpath-10
  * and rfc 7950
  *
  */
@@ -47,7 +47,6 @@
 #include <string.h>
 #include <limits.h>
 #include <stdint.h>
-#include <assert.h>
 #include <syslog.h>
 #include <fcntl.h>
 #include <math.h> /* NaN */
@@ -55,17 +54,20 @@
 /* cligen */
 #include <cligen/cligen.h>
 
-/* clicon */
-#include "clixon_err.h"
-#include "clixon_log.h"
+/* clixon */
 #include "clixon_string.h"
+#include "clixon_map.h"
 #include "clixon_queue.h"
 #include "clixon_hash.h"
 #include "clixon_handle.h"
-#include "clixon_options.h"
 #include "clixon_yang.h"
-#include "clixon_yang_type.h"
 #include "clixon_xml.h"
+#include "clixon_err.h"
+#include "clixon_log.h"
+#include "clixon_debug.h"
+#include "clixon_options.h"
+#include "clixon_regex.h"
+#include "clixon_yang_type.h"
 #include "clixon_xml_map.h"
 #include "clixon_yang_module.h"
 #include "clixon_validate.h"
@@ -75,12 +77,13 @@
 #include "clixon_xpath_function.h"
 
 /*! xpath function translation table
+ *
  * @see enum clixon_xpath_function
  */
 static const map_str2int xpath_fnname_map[] = { /* alphabetic order */
     {"bit-is-set",           XPATHFN_BIT_IS_SET},
     {"boolean",              XPATHFN_BOOLEAN},
-    {"eiling",               XPATHFN_CEILING}, 
+    {"ceiling",              XPATHFN_CEILING},
     {"comment",              XPATHFN_COMMENT},
     {"concat",               XPATHFN_CONCAT},
     {"contains",             XPATHFN_CONTAINS},
@@ -108,6 +111,7 @@ static const map_str2int xpath_fnname_map[] = { /* alphabetic order */
     {"round",                XPATHFN_ROUND},
     {"starts-with",          XPATHFN_STARTS_WITH},
     {"string",               XPATHFN_STRING},
+    {"string-length",        XPATHFN_STRING_LENGTH},
     {"substring",            XPATHFN_SUBSTRING},
     {"substring-after",      XPATHFN_SUBSTRING_AFTER},
     {"substring-before",     XPATHFN_SUBSTRING_BEFORE},
@@ -134,6 +138,17 @@ xp_fnname_int2str(enum clixon_xpath_function code)
     return clicon_int2str(xpath_fnname_map, code);
 }
 
+/*! Returns a node set with the initial context node as its only member.
+ *
+ * @param[in]  xc0  Incoming context
+ * @param[in]  xs   XPath node tree
+ * @param[in]  nsc  XML Namespace context
+ * @param[in]  localonly Skip prefix and namespace tests (non-standard)
+ * @param[out] xrp  Resulting context
+ * @retval     0    OK
+ * @retval    -1    Error
+ * @see RFC 7950 10.1.1
+ */
 int
 xp_function_current(xp_ctx            *xc0,
                     struct xpath_tree *xs,
@@ -145,7 +160,7 @@ xp_function_current(xp_ctx            *xc0,
     cxobj     **vec = NULL;
     int         veclen = 0;
     xp_ctx     *xc = NULL;
-    
+
     if ((xc = ctx_dup(xc0)) == NULL)
         goto done;
     if (cxvec_append(xc->xc_initial, &vec, &veclen) < 0)
@@ -160,11 +175,120 @@ xp_function_current(xp_ctx            *xc0,
     return retval;
 }
 
+/*! Returns "true" if the "subject" string matches the regular expression "pattern";
+ *
+ * @param[in]  xc   Incoming context
+ * @param[in]  xs   XPath node tree
+ * @param[in]  nsc  XML Namespace context
+ * @param[in]  localonly Skip prefix and namespace tests (non-standard)
+ * @param[out] xrp  Resulting context
+ * @retval     0    OK
+ * @retval    -1    Error
+ * @see RFC 7950 10.2.1
+ * @note Uses xml2 regexp if libxml2 enabled, otherwise posix
+ *       This means for xml2, you have to configure BOTH cligen and clixon with --with-libxml2
+ * @note Compiling regexp takes a lot of resources, no caching is made of re here
+ *       as is done for eg YANG patterns
+ * Example: re-match("1.22.333", "\d{1,3}\.\d{1,3}\.\d{1,3}") returns true
+ */
+int
+xp_function_re_match(xp_ctx            *xc,
+                     struct xpath_tree *xs,
+                     cvec              *nsc,
+                     int                localonly,
+                     xp_ctx           **xrp)
+{
+    int    retval = -1;
+    xp_ctx *xr0 = NULL;
+    xp_ctx *xr1 = NULL;
+    xp_ctx *xr = NULL;
+    char   *s0 = NULL;
+    char   *regexp = NULL;
+    char   *posix = NULL;
+    void   *re = NULL;
+    int     ret;
+
+    if (xs == NULL || xs->xs_c0 == NULL || xs->xs_c1 == NULL){
+        clixon_err(OE_XML, EINVAL, "contains expects but did not get two arguments");
+        goto done;
+    }
+    /* contains two arguments in xs: boolean contains(string, string) */
+    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
+        goto done;
+    if (ctx2string(xr0, &s0) < 0)
+        goto done;
+    if (xp_eval(xc, xs->xs_c1, nsc, localonly, &xr1) < 0)
+        goto done;
+    if (ctx2string(xr1, &regexp) < 0)
+        goto done;
+#ifdef HAVE_LIBXML2
+    if ((ret = cligen_regex_libxml2_compile(regexp, &re)) < 0)
+        goto done;
+#else
+    if (regexp_xsd2posix(regexp, &posix) < 0)
+        goto done;
+    if ((ret = cligen_regex_posix_compile(posix, &re)) < 0)
+        goto done;
+#endif
+    if (ret == 0){
+        clixon_err(OE_YANG, 0, "regexp compile fail: \"%s\"", regexp);
+        goto done;
+    }
+    //    s0 = "1.22.333";
+#ifdef HAVE_LIBXML2
+    if ((ret = cligen_regex_libxml2_exec(re, s0)) < 0)
+        goto done;
+
+#else
+    if ((ret = cligen_regex_posix_exec(re, s0)) < 0)
+        goto done;
+#endif
+    if ((xr = malloc(sizeof(*xr))) == NULL){
+        clixon_err(OE_UNIX, errno, "malloc");
+        goto done;
+    }
+    memset(xr, 0, sizeof(*xr));
+    xr->xc_type = XT_BOOL;
+    xr->xc_bool = ret;
+    *xrp = xr;
+    xr = NULL;
+    retval = 0;
+ done:
+    if (re){
+#ifdef HAVE_LIBXML2
+        cligen_regex_libxml2_free(re);
+#else
+        cligen_regex_posix_free(re);
+        free(re);
+#endif
+    }
+    if (xr0)
+        ctx_free(xr0);
+    if (xr1)
+        ctx_free(xr1);
+    if (s0)
+        free(s0);
+    if (regexp)
+        free(regexp);
+    if (posix)
+        free(posix);
+    return retval;
+}
+
+/*! Follows reference defined by the first node and returns nodes it refers to
+ *
+ * @param[in]  xc0  Incoming context
+ * @param[in]  xs   XPath node tree
+ * @param[in]  nsc  XML Namespace context
+ * @param[out] xrp  Resulting context
+ * @retval     0    OK
+ * @retval    -1    Error
+ * @see RFC 7950 10.3.1
+ */
 int
 xp_function_deref(xp_ctx            *xc0,
                   struct xpath_tree *xs,
                   cvec              *nsc,
-                  int                localonly,
                   xp_ctx           **xrp)
 {
     int         retval = -1;
@@ -178,7 +302,7 @@ xp_function_deref(xp_ctx            *xc0,
     yang_stmt  *yt;
     yang_stmt  *ypath;
     char       *path;
-    
+
     /* Create new xc */
     if ((xc = ctx_dup(xc0)) == NULL)
         goto done;
@@ -211,6 +335,7 @@ xp_function_deref(xp_ctx            *xc0,
 }
 
 /*! Helper function for derived-from(-and-self) - eval one node
+ *
  * @param[in]  nsc  XML Namespace context
  * @param[in]  self If set, implements derived_from_or_self
  * @retval     1    OK and match
@@ -280,7 +405,7 @@ derived_from_one(char  *baseidentity,
     else {
         /* Allocate cbuf */
         if ((cb = cbuf_new()) == NULL){
-            clicon_err(OE_UNIX, errno, "cbuf_new"); 
+            clixon_err(OE_UNIX, errno, "cbuf_new");
             goto done;
         }
         cprintf(cb, "%s:%s", yang_argument_get(ymod), id);
@@ -304,15 +429,16 @@ derived_from_one(char  *baseidentity,
 }
 
 /*! Eval xpath function derived-from(-and-self)
+ *
  * @param[in]  xc   Incoming context
- * @param[in]  xs   XPATH node tree
+ * @param[in]  xs   XPath node tree
  * @param[in]  nsc  XML Namespace context
  * @param[in]  localonly Skip prefix and namespace tests (non-standard)
  * @param[in]  self If set, implements derived_from_or_self
  * @param[out] xrp  Resulting context
  * @retval     0    OK
  * @retval    -1    Error
- * @see rfc7950 10.4.1
+ * @see RFC7950 10.4.1
  *  Returns "true" if any node in the argument "nodes" is a node of type "identityref" and its 
  *  value is an identity that is derived from (see Section 7.18.2) the identity "identity"
  * boolean derived-from(node-set nodes, string identity)
@@ -333,25 +459,25 @@ xp_function_derived_from(xp_ctx            *xc,
     char      *identity = NULL;
     int        i;
     int        ret = 0;
-    
+
     if (xs == NULL || xs->xs_c0 == NULL || xs->xs_c1 == NULL){
-        clicon_err(OE_XML, EINVAL, "derived-from expects but did not get two arguments");
+        clixon_err(OE_XML, EINVAL, "derived-from expects but did not get two arguments");
         goto done;
     }
     /* contains two arguments in xs: boolean derived-from(node-set, string) */
     /* This evolves to a set of (identityref) nodes */
-    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)       
+    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
         goto done;
     if (xr0->xc_type != XT_NODESET)
         goto done;
     /* This evolves to a string identity */
-    if (xp_eval(xc, xs->xs_c1, nsc, localonly, &xr1) < 0)       
+    if (xp_eval(xc, xs->xs_c1, nsc, localonly, &xr1) < 0)
         goto done;
     if (ctx2string(xr1, &identity) < 0)
         goto done;
     /* Allocate a return struct of type boolean */
     if ((xr = malloc(sizeof(*xr))) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     memset(xr, 0, sizeof(*xr));
@@ -372,6 +498,8 @@ xp_function_derived_from(xp_ctx            *xc,
         ctx_free(xr0);
     if (xr1)
         ctx_free(xr1);
+    if (xr)
+        ctx_free(xr);
     if (identity)
         free(identity);
     return retval;
@@ -386,7 +514,7 @@ xp_function_derived_from(xp_ctx            *xc,
  * Signature: boolean bit-is-set(node-set nodes, string bit-name)
 
  * @param[in]  xc   Incoming context
- * @param[in]  xs   XPATH node tree
+ * @param[in]  xs   XPath node tree
  * @param[in]  nsc  XML Namespace context
  * @param[in]  localonly Skip prefix and namespace tests (non-standard)
  * @param[out] xrp  Resulting context
@@ -411,21 +539,21 @@ xp_function_bit_is_set(xp_ctx            *xc,
     char   *s1 = NULL;
     cxobj  *x;
     char   *body;
-    
+
     if (xs == NULL || xs->xs_c0 == NULL || xs->xs_c1 == NULL){
-        clicon_err(OE_XML, EINVAL, "contains expects but did not get two arguments");
+        clixon_err(OE_XML, EINVAL, "contains expects but did not get two arguments");
         goto done;
     }
     /* First node-set argument */
-    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)       
+    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
         goto done;
     /* Second string argument */
-    if (xp_eval(xc, xs->xs_c1, nsc, localonly, &xr1) < 0)       
+    if (xp_eval(xc, xs->xs_c1, nsc, localonly, &xr1) < 0)
         goto done;
     if (ctx2string(xr1, &s1) < 0)
         goto done;
     if ((xr = malloc(sizeof(*xr))) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     memset(xr, 0, sizeof(*xr));
@@ -455,9 +583,8 @@ xp_function_bit_is_set(xp_ctx            *xc,
  *
  * Signature: number position(node-set)
  * @param[in]  xc   Incoming context
- * @param[in]  xs   XPATH node tree
+ * @param[in]  xs   XPath node tree
  * @param[in]  nsc  XML Namespace context
- * @param[in]  localonly Skip prefix and namespace tests (non-standard)
  * @param[out] xrp  Resulting context
  * @retval     0    OK
  * @retval    -1    Error
@@ -466,14 +593,13 @@ int
 xp_function_position(xp_ctx            *xc,
                      struct xpath_tree *xs,
                      cvec              *nsc,
-                     int                localonly,
                      xp_ctx           **xrp)
 {
     int         retval = -1;
     xp_ctx     *xr = NULL;
-    
+
     if ((xr = malloc(sizeof(*xr))) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     memset(xr, 0, sizeof(*xr));
@@ -500,15 +626,15 @@ xp_function_count(xp_ctx            *xc,
     int         retval = -1;
     xp_ctx     *xr = NULL;
     xp_ctx     *xr0 = NULL;
-    
+
     if (xs == NULL || xs->xs_c0 == NULL){
-        clicon_err(OE_XML, EINVAL, "count expects but did not get one argument");
+        clixon_err(OE_XML, EINVAL, "count expects but did not get one argument");
         goto done;
     }
-    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)       
+    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
         goto done;
     if ((xr = malloc(sizeof(*xr))) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     memset(xr, 0, sizeof(*xr));
@@ -536,21 +662,21 @@ xp_function_name(xp_ctx            *xc,
                  int                localonly,
                  xp_ctx           **xrp)
 {
-    int         retval = -1;
-    xp_ctx     *xr = NULL;
-    xp_ctx     *xr0 = NULL;
-    char       *s0 = NULL;
-    int         i;
-    cxobj      *x;
-    
+    int     retval = -1;
+    xp_ctx *xr = NULL;
+    xp_ctx *xr0 = NULL;
+    char   *s0 = NULL;
+    int     i;
+    cxobj  *x;
+
     if (xs == NULL || xs->xs_c0 == NULL){
-        clicon_err(OE_XML, EINVAL, "not expects but did not get one argument");
+        clixon_err(OE_XML, EINVAL, "not expects but did not get one argument");
         goto done;
     }
-    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)       
+    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
         goto done;
     if ((xr = malloc(sizeof(*xr))) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     memset(xr, 0, sizeof(*xr));
@@ -559,12 +685,70 @@ xp_function_name(xp_ctx            *xc,
         if ((x = xr0->xc_nodeset[i]) == NULL)
             continue;
         if ((xr->xc_string = strdup(xml_name(x))) == NULL){
-            clicon_err(OE_UNIX, errno, "strdup");
+            clixon_err(OE_UNIX, errno, "strdup");
             goto done;
         }
         break;
     }
     *xrp = xr;
+    xr = NULL;
+    retval = 0;
+ done:
+    if (xr0)
+        ctx_free(xr0);
+    if (s0)
+        free(s0);
+    if (xr)
+        ctx_free(xr);
+    return retval;
+}
+
+/*! Eval xpath function converts an object to a string
+ *
+ * @param[in]  xc   Incoming context
+ * @param[in]  xs   XPath node tree
+ * @param[in]  nsc  XML Namespace context
+ * @param[in]  localonly Skip prefix and namespace tests (non-standard)
+ * @param[out] xrp  Resulting context
+ * @retval     0    OK
+ * @retval    -1    Error
+ * @see https://www.w3.org/TR/xpath-10/#NT-FunctionName 4.2 String Functions
+ */
+int
+xp_function_string(xp_ctx            *xc,
+                   struct xpath_tree *xs,
+                   cvec              *nsc,
+                   int                localonly,
+                   xp_ctx           **xrp)
+{
+    int    retval = -1;
+    xp_ctx *xr0 = NULL;
+    xp_ctx *xr = NULL;
+    char   *s0 = NULL;
+
+    if (xs != NULL && xs->xs_c0){
+        /* contains two arguments in xs: boolean contains(string, string) */
+        if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
+            goto done;
+        if (ctx2string(xr0, &s0) < 0)
+            goto done;
+    }
+    else {
+        if ((s0 = strdup("")) == NULL){
+            clixon_err(OE_UNIX, errno, "strdup");
+            goto done;
+        }
+    }
+    if ((xr = malloc(sizeof(*xr))) == NULL){
+        clixon_err(OE_UNIX, errno, "malloc");
+        goto done;
+    }
+    memset(xr, 0, sizeof(*xr));
+    xr->xc_type = XT_STRING;
+    xr->xc_string = s0;
+    s0 = NULL;
+    *xrp = xr;
+    xr = NULL;
     retval = 0;
  done:
     if (xr0)
@@ -574,10 +758,12 @@ xp_function_name(xp_ctx            *xc,
     return retval;
 }
 
-/*! Eval xpath function contains
+/*! Eval xpath function contains sub-string
+ *
  * @param[in]  xc   Incoming context
- * @param[in]  xs   XPATH node tree
+ * @param[in]  xs   XPath node tree
  * @param[in]  nsc  XML Namespace context
+ * @param[in]  starts 0: contains, 1: starts with
  * @param[in]  localonly Skip prefix and namespace tests (non-standard)
  * @param[out] xrp  Resulting context
  * @retval     0    OK
@@ -588,36 +774,40 @@ int
 xp_function_contains(xp_ctx            *xc,
                      struct xpath_tree *xs,
                      cvec              *nsc,
+                     int                starts,
                      int                localonly,
                      xp_ctx           **xrp)
 {
-    int                retval = -1;
-    xp_ctx            *xr0 = NULL;
-    xp_ctx            *xr1 = NULL;
-    xp_ctx            *xr = NULL;
-    char              *s0 = NULL;
-    char              *s1 = NULL;
+    int    retval = -1;
+    xp_ctx *xr0 = NULL;
+    xp_ctx *xr1 = NULL;
+    xp_ctx *xr = NULL;
+    char   *s0 = NULL;
+    char   *s1 = NULL;
 
     if (xs == NULL || xs->xs_c0 == NULL || xs->xs_c1 == NULL){
-        clicon_err(OE_XML, EINVAL, "contains expects but did not get two arguments");
+        clixon_err(OE_XML, EINVAL, "contains expects but did not get two arguments");
         goto done;
     }
     /* contains two arguments in xs: boolean contains(string, string) */
-    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)       
+    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
         goto done;
     if (ctx2string(xr0, &s0) < 0)
         goto done;
-    if (xp_eval(xc, xs->xs_c1, nsc, localonly, &xr1) < 0)       
+    if (xp_eval(xc, xs->xs_c1, nsc, localonly, &xr1) < 0)
         goto done;
     if (ctx2string(xr1, &s1) < 0)
         goto done;
     if ((xr = malloc(sizeof(*xr))) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     memset(xr, 0, sizeof(*xr));
     xr->xc_type = XT_BOOL;
-    xr->xc_bool = (strstr(s0, s1) != NULL);
+    if (starts)
+        xr->xc_bool = (strncmp(s0, s1, strlen(s1)) == 0);
+    else
+        xr->xc_bool = (strstr(s0, s1) != NULL);
     *xrp = xr;
     xr = NULL;
     retval = 0;
@@ -630,6 +820,363 @@ xp_function_contains(xp_ctx            *xc,
         free(s0);
     if (s1)
         free(s1);
+    return retval;
+}
+
+/*! Eval xpath function contains sub-string
+ *
+ * @param[in]  xc   Incoming context
+ * @param[in]  xs   XPath node tree
+ * @param[in]  nsc  XML Namespace context
+ * @param[in]  before 0:Return substring after, 1: before
+ * @param[in]  localonly Skip prefix and namespace tests (non-standard)
+ * @param[out] xrp  Resulting context
+ * @retval     0    OK
+ * @retval    -1    Error
+ * @see https://www.w3.org/TR/xpath-10/#NT-FunctionName 4.2 String Functions
+ * Example: substring-before("1999/04/01","/") returns "1999"
+ */
+int
+xp_function_substring_str(xp_ctx            *xc,
+                          struct xpath_tree *xs,
+                          cvec              *nsc,
+                          int                before,
+                          int                localonly,
+                          xp_ctx           **xrp)
+{
+    int    retval = -1;
+    xp_ctx *xr0 = NULL;
+    xp_ctx *xr1 = NULL;
+    xp_ctx *xr = NULL;
+    char   *s0 = NULL;
+    char   *s1 = NULL;
+    char   *sp;
+
+    if (xs == NULL || xs->xs_c0 == NULL || xs->xs_c1 == NULL){
+        clixon_err(OE_XML, EINVAL, "contains expects but did not get two arguments");
+        goto done;
+    }
+    /* contains two arguments in xs: boolean contains(string, string) */
+    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
+        goto done;
+    if (ctx2string(xr0, &s0) < 0)
+        goto done;
+    if (xp_eval(xc, xs->xs_c1, nsc, localonly, &xr1) < 0)
+        goto done;
+    if (ctx2string(xr1, &s1) < 0)
+        goto done;
+    if ((xr = malloc(sizeof(*xr))) == NULL){
+        clixon_err(OE_UNIX, errno, "malloc");
+        goto done;
+    }
+    memset(xr, 0, sizeof(*xr));
+    xr->xc_type = XT_STRING;
+    sp = strstr(s0, s1);
+    if (before) {
+        if (sp != NULL)
+            *sp = '\0';
+        else
+            *s0 = '\0';
+        if ((xr->xc_string = strdup(s0)) == NULL){
+            clixon_err(OE_UNIX, errno, "strdup");
+            goto done;
+        }
+    }
+    else {
+        if (sp)
+            sp += strlen(s1);
+        if (sp == NULL)
+            sp = "";
+        if ((xr->xc_string = strdup(sp)) == NULL){
+            clixon_err(OE_UNIX, errno, "strdup");
+            goto done;
+        }
+    }
+    *xrp = xr;
+    xr = NULL;
+    retval = 0;
+ done:
+    if (xr0)
+        ctx_free(xr0);
+    if (xr1)
+        ctx_free(xr1);
+    if (s0)
+        free(s0);
+    if (s1)
+        free(s1);
+    return retval;
+}
+
+/*! Eval xpath function return substring
+ *
+ * @param[in]  xc   Incoming context
+ * @param[in]  xs   XPath node tree
+ * @param[in]  nsc  XML Namespace context
+ * @param[in]  localonly Skip prefix and namespace tests (non-standard)
+ * @param[out] xrp  Resulting context
+ * @retval     0    OK
+ * @retval    -1    Error
+ * @see https://www.w3.org/TR/xpath-10/#NT-FunctionName 4.2 String Functions
+ */
+int
+xp_function_substring(xp_ctx            *xc,
+                      struct xpath_tree *xs,
+                      cvec              *nsc,
+                      int                localonly,
+                      xp_ctx           **xrp)
+{
+    int                retval = -1;
+    struct xpath_tree *a0;
+    struct xpath_tree *a1;
+    struct xpath_tree *a2;
+    xp_ctx            *xr0 = NULL;
+    xp_ctx            *xr1 = NULL;
+    xp_ctx            *xr2 = NULL;
+    xp_ctx            *xr = NULL;
+    char              *s0 = NULL;
+    char              *s0p;
+    double             d1;
+    double             d2;
+    int32_t            i1;
+    int32_t            i10;
+    int32_t            i2;
+    int32_t            it;
+
+    if (xs == NULL || xs->xs_c0 == NULL || xs->xs_c1 == NULL){
+        clixon_err(OE_XML, EINVAL, "contains expects but did not get two arguments");
+        goto done;
+    }
+    if (xs->xs_c0->xs_c1 != NULL){
+        a0 = xs->xs_c0->xs_c0;
+        a1 = xs->xs_c0->xs_c1;
+        a2 = xs->xs_c1;
+    }
+    else {
+        a0 = xs->xs_c0;
+        a1 = xs->xs_c1;
+        a2 = NULL;
+    }
+    /* contains two arguments in xs: boolean contains(string, string) */
+    if (xp_eval(xc, a0, nsc, localonly, &xr0) < 0)
+        goto done;
+    if (ctx2string(xr0, &s0) < 0)
+        goto done;
+    if (xp_eval(xc, a1, nsc, localonly, &xr1) < 0)
+        goto done;
+    if (ctx2number(xr1, &d1) < 0)
+        goto done;
+    if ((i10 = round(d1)-1) < 0)
+        i1 = 0;
+    else
+        i1 = i10;
+    if ((xr = malloc(sizeof(*xr))) == NULL){
+        clixon_err(OE_UNIX, errno, "malloc");
+        goto done;
+    }
+    memset(xr, 0, sizeof(*xr));
+    xr->xc_type = XT_STRING;
+    if (i1 < strlen(s0))
+        s0p = &s0[i1];
+    else
+        s0p = "";
+    if (a2) {
+        if (xp_eval(xc, a2, nsc, localonly, &xr2) < 0)
+            goto done;
+        if (ctx2number(xr2, &d2) < 0)
+            goto done;
+        if ((i2 = round(d2)) < 0)
+            i2 = 0;
+        it = i10+i2;
+        if (it < (int)strlen(s0)){
+            if (it < 0)
+                *s0p = '\0';
+            else
+                *(s0+i10+i2) = '\0';
+        }
+    }
+    if ((xr->xc_string = strdup(s0p)) == NULL){
+        clixon_err(OE_UNIX, errno, "strdup");
+        goto done;
+    }
+    *xrp = xr;
+    xr = NULL;
+    retval = 0;
+ done:
+    if (xr0)
+        ctx_free(xr0);
+    if (xr1)
+        ctx_free(xr1);
+    if (xr2)
+        ctx_free(xr2);
+    if (s0)
+        free(s0);
+    return retval;
+}
+
+/*! Eval xpath function returns the number of characters in the string
+ *
+ * @param[in]  xc   Incoming context
+ * @param[in]  xs   XPath node tree
+ * @param[in]  nsc  XML Namespace context
+ * @param[in]  localonly Skip prefix and namespace tests (non-standard)
+ * @param[out] xrp  Resulting context
+ * @retval     0    OK
+ * @retval    -1    Error
+ * @see https://www.w3.org/TR/xpath-10/#NT-FunctionName 4.2 String Functions
+ * XXX Dont know how to implement string-length() without arg
+ */
+int
+xp_function_string_length(xp_ctx            *xc,
+                          struct xpath_tree *xs,
+                          cvec              *nsc,
+                          int                localonly,
+                          xp_ctx           **xrp)
+{
+    int    retval = -1;
+    xp_ctx *xr0 = NULL;
+    xp_ctx *xr = NULL;
+    char   *s0 = NULL;
+
+    if (xs != NULL && xs->xs_c0){
+        /* contains two arguments in xs: boolean contains(string, string) */
+        if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
+            goto done;
+        if (ctx2string(xr0, &s0) < 0)
+            goto done;
+    }
+    else {
+        if ((s0 = strdup("")) == NULL){
+            clixon_err(OE_UNIX, errno, "strdup");
+            goto done;
+        }
+    }
+    if ((xr = malloc(sizeof(*xr))) == NULL){
+        clixon_err(OE_UNIX, errno, "malloc");
+        goto done;
+    }
+    memset(xr, 0, sizeof(*xr));
+    xr->xc_type = XT_NUMBER;
+    xr->xc_number = strlen(s0);
+    s0 = NULL;
+    *xrp = xr;
+    xr = NULL;
+    retval = 0;
+ done:
+    if (xr0)
+        ctx_free(xr0);
+    if (s0)
+        free(s0);
+    return retval;
+}
+
+/*! Eval xpath function replaces characters in the first string
+ *
+ * Returns the first argument string with occurrences of characters in the second argument string
+ * replaced by the character at the corresponding position in the third argument string.
+ * @param[in]  xc   Incoming context
+ * @param[in]  xs   XPath node tree
+ * @param[in]  nsc  XML Namespace context
+ * @param[in]  localonly Skip prefix and namespace tests (non-standard)
+ * @param[out] xrp  Resulting context
+ * @retval     0    OK
+ * @retval    -1    Error
+ * @see https://www.w3.org/TR/xpath-10/#NT-FunctionName 4.2 String Functions
+ */
+int
+xp_function_translate(xp_ctx            *xc,
+                      struct xpath_tree *xs,
+                      cvec              *nsc,
+                      int                localonly,
+                      xp_ctx           **xrp)
+{
+    int                retval = -1;
+    struct xpath_tree *a0;
+    struct xpath_tree *a1;
+    struct xpath_tree *a2;
+    xp_ctx            *xr0 = NULL;
+    xp_ctx            *xr1 = NULL;
+    xp_ctx            *xr2 = NULL;
+    xp_ctx            *xr = NULL;
+    char              *s0 = NULL;
+    char              *s1 = NULL;
+    char              *s2 = NULL;
+    cbuf              *cb = NULL;
+    char              *p1;
+    char               ch;
+    int                i;
+    int                j;
+
+    if (xs == NULL || xs->xs_c0 == NULL || xs->xs_c1 == NULL){
+        clixon_err(OE_XML, EINVAL, "contains expects but did not get two arguments");
+        goto done;
+    }
+    if (xs->xs_c0->xs_c1 != NULL){
+        a0 = xs->xs_c0->xs_c0;
+        a1 = xs->xs_c0->xs_c1;
+        a2 = xs->xs_c1;
+    }
+    else {
+        a0 = xs->xs_c0;
+        a1 = xs->xs_c1;
+        a2 = NULL;
+    }
+    /* contains two arguments in xs: boolean contains(string, string) */
+    if (xp_eval(xc, a0, nsc, localonly, &xr0) < 0)
+        goto done;
+    if (ctx2string(xr0, &s0) < 0)
+        goto done;
+    if (xp_eval(xc, a1, nsc, localonly, &xr1) < 0)
+        goto done;
+    if (ctx2string(xr1, &s1) < 0)
+        goto done;
+    if (a2) {
+        if (xp_eval(xc, a2, nsc, localonly, &xr2) < 0)
+            goto done;
+        if (ctx2string(xr2, &s2) < 0)
+            goto done;
+    }
+    if ((xr = malloc(sizeof(*xr))) == NULL){
+        clixon_err(OE_UNIX, errno, "malloc");
+        goto done;
+    }
+    memset(xr, 0, sizeof(*xr));
+    xr->xc_type = XT_STRING;
+    if ((cb = cbuf_new()) == NULL){
+        clixon_err(OE_UNIX, errno, "cbuf_new");
+        goto done;
+    }
+    for (i=0; i<strlen(s0); i++){
+        ch = s0[i];
+        if ((p1 = strchr(s1, s0[i])) != NULL){
+            j = p1 - s1;
+            if (j < strlen(s2))
+                cprintf(cb, "%c", s2[j]);
+        }
+        else
+            cprintf(cb, "%c", ch);
+    }
+    if ((xr->xc_string = strdup(cbuf_get(cb))) == NULL){
+        clixon_err(OE_UNIX, errno, "strdup");
+        goto done;
+    }
+    *xrp = xr;
+    xr = NULL;
+    retval = 0;
+ done:
+    if (xr0)
+        ctx_free(xr0);
+    if (xr1)
+        ctx_free(xr1);
+    if (xr2)
+        ctx_free(xr2);
+    if (s0)
+        free(s0);
+    if (s1)
+        free(s1);
+    if (s2)
+        free(s2);
+    if (cb)
+        cbuf_free(cb);
     return retval;
 }
 
@@ -654,16 +1201,16 @@ xp_function_boolean(xp_ctx            *xc,
     xp_ctx     *xr = NULL;
     xp_ctx     *xr0 = NULL;
     int         bool;
-    
+
     if (xs == NULL || xs->xs_c0 == NULL){
-        clicon_err(OE_XML, EINVAL, "not expects but did not get one argument");
+        clixon_err(OE_XML, EINVAL, "not expects but did not get one argument");
         goto done;
     }
-    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)       
+    if (xp_eval(xc, xs->xs_c0, nsc, localonly, &xr0) < 0)
         goto done;
     bool = ctx2boolean(xr0);
     if ((xr = malloc(sizeof(*xr))) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     memset(xr, 0, sizeof(*xr));
@@ -702,14 +1249,13 @@ int
 xp_function_true(xp_ctx            *xc,
                  struct xpath_tree *xs,
                  cvec              *nsc,
-                 int                localonly,
                  xp_ctx           **xrp)
 {
     int         retval = -1;
     xp_ctx     *xr = NULL;
-    
+
     if ((xr = malloc(sizeof(*xr))) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     memset(xr, 0, sizeof(*xr));
@@ -729,14 +1275,13 @@ int
 xp_function_false(xp_ctx            *xc,
                   struct xpath_tree *xs,
                   cvec              *nsc,
-                  int                localonly,
                   xp_ctx           **xrp)
 {
     int         retval = -1;
     xp_ctx     *xr = NULL;
-    
+
     if ((xr = malloc(sizeof(*xr))) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     memset(xr, 0, sizeof(*xr));

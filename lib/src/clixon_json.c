@@ -33,9 +33,9 @@
   ***** END LICENSE BLOCK *****
 
  * JSON support functions.
- * JSON syntax is according to:
- * http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf
- * RFC 7951 JSON Encoding of Data Modeled with YANG
+ * @see http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf
+ *  and RFC 7951 JSON Encoding of Data Modeled with YANG
+ *  and RFC 8259 The JavaScript Object Notation (JSON) Data Interchange Format
  * XXX: The complexity of xml2json1_cbuf() mapping from internal cxobj structure to JSON output
  * needs a rewrite due to complexity of lists/leaf-lists/null-values, etc.
  */
@@ -58,15 +58,16 @@
 #include <cligen/cligen.h>
 
 /* clixon */
-#include "clixon_err.h"
-#include "clixon_log.h"
 #include "clixon_queue.h"
 #include "clixon_string.h"
 #include "clixon_hash.h"
 #include "clixon_handle.h"
-#include "clixon_options.h"
 #include "clixon_yang.h"
 #include "clixon_xml.h"
+#include "clixon_err.h"
+#include "clixon_log.h"
+#include "clixon_debug.h"
+#include "clixon_options.h"
 #include "clixon_yang_type.h"
 #include "clixon_yang_module.h"
 #include "clixon_xml_sort.h"
@@ -107,6 +108,7 @@ enum childtype{
 };
 
 /*! x is element and has exactly one child which in turn has none 
+ *
  * remove attributes from x
  * @see tleaf in clixon_xml_map.c
  */
@@ -190,8 +192,8 @@ arraytype2str(enum array_element_type lt)
  * @retval     arraytype Type of array 
  */
 static enum array_element_type
-array_eval(cxobj *xprev, 
-           cxobj *x, 
+array_eval(cxobj *xprev,
+           cxobj *x,
            cxobj *xnext)
 {
     enum array_element_type arraytype = NO_ARRAY;
@@ -206,7 +208,7 @@ array_eval(cxobj *xprev,
         arraytype = BODY_ARRAY;
         goto done;
     }
-    if (xnext && 
+    if (xnext &&
         xml_type(xnext)==CX_ELMNT &&
         strcmp(xml_name(x), xml_name(xnext))==0){
         ns2 = xml_find_type_value(xnext, NULL, "xmlns", CX_ATTR);
@@ -241,28 +243,42 @@ array_eval(cxobj *xprev,
 }
 
 /*! Escape a json string as well as decode xml cdata
+ *
  * @param[out] cb   cbuf   (encoded)
  * @param[in]  str  string (unencoded)
+ * @retval     0    OK
  */
 static int
 json_str_escape_cdata(cbuf *cb,
                       char *str)
 {
-    int   retval = -1;
-    int   i;
+    int    retval = -1;
     size_t len;
-    
+    int    i;
+
     len = strlen(str);
     for (i=0; i<len; i++)
         switch (str[i]){
-        case '\n':
-            cprintf(cb, "\\n");
-            break;
         case '\"':
             cprintf(cb, "\\\"");
             break;
         case '\\':
             cprintf(cb, "\\\\");
+            break;
+        case '\b':
+            cprintf(cb, "\\b");
+            break;
+        case '\f':
+            cprintf(cb, "\\f");
+            break;
+        case '\n':
+            cprintf(cb, "\\n");
+            break;
+        case '\r':
+            cprintf(cb, "\\r");
+            break;
+        case '\t':
+            cprintf(cb, "\\t");
             break;
         default: /* fall thru */
             cprintf(cb, "%c", str[i]);
@@ -274,6 +290,7 @@ json_str_escape_cdata(cbuf *cb,
 }
 
 /*! Decode types from JSON to XML identityrefs
+ *
  * Assume an xml tree where prefix:name have been split into "module":"name"
  * In other words, from JSON RFC7951 to XML namespace trees
  * @param[in]     x     XML tree. Must be yang populated.
@@ -300,8 +317,8 @@ json2xml_decode_identityref(cxobj     *x,
     cvec      *nsc = NULL;
     char      *prefix2 = NULL;
     cbuf      *cbv = NULL;
-    
-    clicon_debug(1, "%s", __FUNCTION__);
+
+    clixon_debug(CLIXON_DBG_DEFAULT, "");
     yspec = ys_spec(y);
     if ((xb = xml_body_get(x)) == NULL)
         goto ok;
@@ -319,8 +336,8 @@ json2xml_decode_identityref(cxobj     *x,
              */
             if (xml_nsctx_node(x, &nsc) < 0)
                 goto done;
-            clicon_debug(1, "%s prefix:%s body:%s namespace:%s",
-                         __FUNCTION__, prefix, body, ns);
+            clixon_debug(CLIXON_DBG_DEFAULT, "prefix:%s body:%s namespace:%s",
+                         prefix, body, ns);
             if (!xml_nsctx_get_prefix(nsc, ns, &prefix2)){
                 /* (no)  insert a xmlns:<prefix> statement
                  * Get yang prefix from import statement of my mod 
@@ -332,14 +349,14 @@ json2xml_decode_identityref(cxobj     *x,
                 if (prefix2 == NULL)
                     prefix2 = yang_find_myprefix(ymod);
                 /* Add "xmlns:prefix2=namespace" */
-                if (xml_add_attr(x, prefix2, ns, "xmlns", NULL) < 0)
+                if (xml_add_attr(x, prefix2, ns, "xmlns", NULL) == NULL)
                     goto done;
 
             }
             /* Here prefix2 is valid and can be NULL
                Change body prefix to prefix2:id */
             if ((cbv = cbuf_new()) == NULL){
-                clicon_err(OE_JSON, errno, "cbuf_new");
+                clixon_err(OE_JSON, errno, "cbuf_new");
                 goto done;
             }
             if (prefix2)
@@ -352,8 +369,8 @@ json2xml_decode_identityref(cxobj     *x,
         }
         else{
             if (xerr && netconf_unknown_namespace_xml(xerr, "application",
-                                              prefix,
-                                              "No module corresponding to prefix") < 0)         
+                                                      prefix,
+                                                      "No module corresponding to prefix") < 0)
                 goto done;
             goto fail;
         }
@@ -433,10 +450,13 @@ json2xml_decode(cxobj     *x,
 }
 
 /*! Encode leaf/leaf_list identityref type from XML to JSON
- * @param[in]     x    XML body node
- * @param[in]     body body string
- * @param[in]     ys   Yang spec of parent
- * @param[out]    cb   Encoded string
+ *
+ * @param[in]   x    XML body node
+ * @param[in]   body body string
+ * @param[in]   ys   Yang spec of parent
+ * @param[out]  cb   Encoded string
+ * @retval      0    OK
+ * @retval     -1    Error
  */
 static int
 xml2json_encode_identityref(cxobj     *xb,
@@ -452,7 +472,7 @@ xml2json_encode_identityref(cxobj     *xb,
     yang_stmt *yspec;
     yang_stmt *my_ymod;
 
-    clicon_debug(1, "%s %s", __FUNCTION__, body);
+    clixon_debug(CLIXON_DBG_DEFAULT, "%s", body);
     my_ymod = ys_module(yp);
     yspec = ys_spec(yp);
     if (nodeid_split(body, &prefix, &id) < 0)
@@ -461,23 +481,7 @@ xml2json_encode_identityref(cxobj     *xb,
     if (xml2ns(xb, prefix, &namespace) < 0)
         goto done;
     /* We got the namespace, now get the module */
-    //    clicon_debug(1, "%s body:%s prefix:%s namespace:%s", __FUNCTION__, body, prefix, namespace);
-#ifdef IDENTITYREF_KLUDGE
-    if (namespace == NULL){
-    /* If we dont find namespace here, we assume it is because of a missing
-     * xmlns that should be there, as a kludge we search for its (own)
-     * prefix in mymodule.
-    */
-        if ((ymod = yang_find_module_by_prefix_yspec(yspec, prefix)) != NULL)
-            cprintf(cb, "%s:%s", yang_argument_get(ymod), id);
-        else
-            cprintf(cb, "%s", id);
-    }
-    else
-#endif
-        {
     if ((ymod = yang_find_module_by_namespace(yspec, namespace)) != NULL){
-        
         if (ymod == my_ymod)
             cprintf(cb, "%s", id);
         else{
@@ -486,7 +490,6 @@ xml2json_encode_identityref(cxobj     *xb,
     }
     else
         cprintf(cb, "%s", id);
-        }
     retval = 0;
  done:
     if (prefix)
@@ -497,10 +500,13 @@ xml2json_encode_identityref(cxobj     *xb,
 }
 
 /*! Encode leaf/leaf_list types from XML to JSON
- * @param[in]     xb   XML body
- * @param[in]     xp   XML parent
- * @param[in]     yp   Yang spec of parent
- * @param[out]    cb0  Encoded string
+ *
+ * @param[in]   xb   XML body
+ * @param[in]   xp   XML parent
+ * @param[in]   yp   Yang spec of parent
+ * @param[out]  cb0  Encoded string
+ * @retval      0    OK
+ * @retval     -1    Error
  */
 static int
 xml2json_encode_leafs(cxobj     *xb,
@@ -519,12 +525,12 @@ xml2json_encode_leafs(cxobj     *xb,
     cbuf         *cb = NULL; /* the variable itself */
 
     if ((cb = cbuf_new()) ==NULL){
-        clicon_err(OE_XML, errno, "cbuf_new");
+        clixon_err(OE_XML, errno, "cbuf_new");
         goto done;
     }
     body = xb?xml_value(xb):NULL;
     if (yp == NULL){
-        cprintf(cb, "%s", body?body:"null"); 
+        cprintf(cb, "%s", body?body:"null");
         goto ok; /* unknown */
     }
     keyword = yang_keyword_get(yp);
@@ -535,7 +541,7 @@ xml2json_encode_leafs(cxobj     *xb,
             goto done;
         restype = ytype?yang_argument_get(ytype):NULL;
         cvtype = yang_type2cv(yp);
-        switch (cvtype){ 
+        switch (cvtype){
         case CGV_STRING:
         case CGV_REST:
             if (body==NULL)
@@ -555,16 +561,16 @@ xml2json_encode_leafs(cxobj     *xb,
         case CGV_INT64:
         case CGV_UINT64:
         case CGV_DEC64:
-                // [RFC7951] JSON Encoding of YANG Data
-                // 6.1 Numeric Types - A value of the "int64", "uint64", or "decimal64" type is represented as a JSON string
-                if (yang_keyword_get(yp) == Y_LEAF_LIST && xml_child_nr_type(xml_parent(xp), CX_ELMNT) == 1) {
-                        cprintf(cb, "[%s]", body);
-                }
-                else {
-                        cprintf(cb, "%s", body);
-                }
-                quote = 1;
-                break;
+            // [RFC7951] JSON Encoding of YANG Data
+            // 6.1 Numeric Types - A value of the "int64", "uint64", or "decimal64" type is represented as a JSON string
+            if (yang_keyword_get(yp) == Y_LEAF_LIST && xml_child_nr_type(xml_parent(xp), CX_ELMNT) == 1) {
+                cprintf(cb, "[%s]", body);
+            }
+            else {
+                cprintf(cb, "%s", body);
+            }
+            quote = 1;
+            break;
         case CGV_INT8:
         case CGV_INT16:
         case CGV_INT32:
@@ -663,6 +669,7 @@ nullchild(cbuf      *cb,
 }
 
 /*! Encode json metadata
+ *
  * This function could be more general, code based on two examples:
  * 1) ietf-list-pagination:remaining
  *  {
@@ -720,6 +727,8 @@ json_metadata_encoding(cbuf  *cb,
  * @param[in]     pretty   Pretty-print output (2 means debug)
  * @param[in]     modname  Name of yang module
  * @param[in,out] metacb   Encode into cbuf
+ * @retval        0        OK
+ * @retval       -1        Error
  * @see RFC7952
  */
 static int
@@ -736,7 +745,7 @@ xml2json_encode_attr(cxobj     *xa,
     char         *namespace = NULL;
     yang_stmt    *ymod;
     enum rfc_6020 ykeyw;
-    
+
     if (xml2ns(xa, xml_prefix(xa), &namespace) < 0)
         goto done;
     /* Check for (1) registered meta-data */
@@ -773,14 +782,18 @@ xml2json_encode_attr(cxobj     *xa,
 }
 
 /*! Do the actual work of translating XML to JSON 
- * @param[out]   cb        Cligen text buffer containing json on exit
- * @param[in]    x         XML tree structure containing XML to translate
- * @param[in]    arraytype Does x occur in a array (of its parent) and how?
- * @param[in]    level     Indentation level
- * @param[in]    pretty    Pretty-print output (2 means debug)
- * @param[in]    flat      Dont print NO_ARRAY object name (for _vec call)
- * @param[in]    modname0
- * @param[out]   metacbp   Meta encoding of attribute
+ *
+ * @param[out]  cb        Cligen text buffer containing json on exit
+ * @param[in]   x         XML tree structure containing XML to translate
+ * @param[in]   arraytype Does x occur in a array (of its parent) and how?
+ * @param[in]   level     Indentation level
+ * @param[in]   pretty    Pretty-print output (2 means debug)
+ * @param[in]   flat      Dont print NO_ARRAY object name (for _vec call)
+ * @param[in]   system_only Enable checks for system-only-config extension
+ * @param[in]   modname0
+ * @param[out]  metacbp   Meta encoding of attribute
+ * @retval      0         OK
+ * @retval     -1         Error
  *
  * @note Does not work with XML attributes
  * The following matrix explains how the mapping is done.
@@ -810,13 +823,14 @@ xml2json_encode_attr(cxobj     *xa,
   |          |\n\t]         |\n\t]         |\n\t}\t]      |
   +----------+--------------+--------------+--------------+
  */
-static int 
+static int
 xml2json1_cbuf(cbuf                   *cb,
                cxobj                  *x,
                enum array_element_type arraytype,
                int                     level,
                int                     pretty,
                int                     flat,
+               int                     system_only,
                char                   *modname0,
                cbuf                   *metacbp)
 {
@@ -826,11 +840,13 @@ xml2json1_cbuf(cbuf                   *cb,
     cxobj           *xp;
     enum childtype   childt;
     enum array_element_type xc_arraytype;
+    yang_stmt       *yc;
     yang_stmt       *ys;
     yang_stmt       *ymod = NULL; /* yang module */
     int              commas;
     char            *modname = NULL;
     cbuf            *metacbc = NULL;
+    int              exist;
 
     if ((ys = xml_spec(x)) != NULL){
         if (ys_real_module(ys, &ymod) < 0)
@@ -849,7 +865,7 @@ xml2json1_cbuf(cbuf                   *cb,
     }
     childt = child_type(x);
     if (pretty==2)
-        cprintf(cb, "#%s_array, %s_child ", 
+        cprintf(cb, "#%s_array, %s_child ",
                 arraytype2str(arraytype),
                 childtype2str(childt));
     switch(arraytype){
@@ -861,7 +877,7 @@ xml2json1_cbuf(cbuf                   *cb,
     case NO_ARRAY:
         if (!flat){
             cprintf(cb, "%*s\"", pretty?(level*PRETTYPRINT_INDENT):0, "");
-            if (modname) 
+            if (modname)
                 cprintf(cb, "%s:", modname);
             cprintf(cb, "%s\":%s", xml_name(x), pretty?" ":"");
         }
@@ -886,7 +902,7 @@ xml2json1_cbuf(cbuf                   *cb,
             cprintf(cb, "%s:", modname);
         cprintf(cb, "%s\":%s", xml_name(x), pretty?" ":"");
         level++;
-        cprintf(cb, "[%s%*s", 
+        cprintf(cb, "[%s%*s",
                 pretty?"\n":"",
                 pretty?(level*PRETTYPRINT_INDENT):0, "");
         switch (childt){
@@ -906,7 +922,7 @@ xml2json1_cbuf(cbuf                   *cb,
     case MIDDLE_ARRAY:
     case LAST_ARRAY:
         level++;
-        cprintf(cb, "%*s", 
+        cprintf(cb, "%*s",
                 pretty?(level*PRETTYPRINT_INDENT):0, "");
         switch (childt){
         case NULL_CHILD:
@@ -926,7 +942,7 @@ xml2json1_cbuf(cbuf                   *cb,
         break;
     }
     if ((metacbc = cbuf_new()) == NULL){
-        clicon_err(OE_UNIX, errno, "cbuf_new");
+        clixon_err(OE_UNIX, errno, "cbuf_new");
         goto done;
     }
     /* Check for typed sub-body if:
@@ -942,24 +958,32 @@ xml2json1_cbuf(cbuf                   *cb,
                 goto done;
             continue;
         }
-        xc_arraytype = array_eval(i?xml_child_i(x,i-1):NULL, 
-                                xc, 
-                                xml_child_i(x, i+1));
-        if (xml2json1_cbuf(cb, 
-                           xc, 
-                           xc_arraytype,
-                           level+1, pretty, 0, modname0,
-                           metacbc) < 0)
-            goto done;
-        if (commas > 0) {
-            cprintf(cb, ",%s", pretty?"\n":"");
-            --commas;
+        xc_arraytype = array_eval(i?xml_child_i(x,i-1):NULL,
+                                  xc,
+                                  xml_child_i(x, i+1));
+        exist = 0;
+        if ((yc = xml_spec(xc)) != NULL && system_only){
+            if (yang_extension_value(yc, "system-only-config", CLIXON_LIB_NS, &exist, NULL) < 0)
+                goto done;
+            if (exist && commas)
+                commas--;
+        }
+        if (!exist) {
+            if (xml2json1_cbuf(cb,
+                               xc,
+                               xc_arraytype,
+                               level+1, pretty, 0, system_only, modname0,
+                               metacbc) < 0)
+                goto done;
+            if (commas > 0) {
+                cprintf(cb, ",%s", pretty?"\n":"");
+                --commas;
+            }
         }
     }
     if (cbuf_len(metacbc)){
         cprintf(cb, "%s", cbuf_get(metacbc));
     }
-
     switch (arraytype){
     case BODY_ARRAY:
         break;
@@ -969,7 +993,7 @@ xml2json1_cbuf(cbuf                   *cb,
         case BODY_CHILD:
             break;
         case ANY_CHILD:
-            cprintf(cb, "%s%*s}", 
+            cprintf(cb, "%s%*s}",
                     pretty?"\n":"",
                     pretty?(level*PRETTYPRINT_INDENT):0, "");
             break;
@@ -985,7 +1009,7 @@ xml2json1_cbuf(cbuf                   *cb,
         case BODY_CHILD:
             break;
         case ANY_CHILD:
-            cprintf(cb, "%s%*s}", 
+            cprintf(cb, "%s%*s}",
                     pretty?"\n":"",
                     pretty?(level*PRETTYPRINT_INDENT):0, "");
             level--;
@@ -1002,7 +1026,7 @@ xml2json1_cbuf(cbuf                   *cb,
             cprintf(cb, "%s",pretty?"\n":"");
             break;
         case ANY_CHILD:
-            cprintf(cb, "%s%*s}", 
+            cprintf(cb, "%s%*s}",
                     pretty?"\n":"",
                     pretty?(level*PRETTYPRINT_INDENT):0, "");
             cprintf(cb, "%s",pretty?"\n":"");
@@ -1029,28 +1053,30 @@ xml2json1_cbuf(cbuf                   *cb,
  * XML-style namespace notation in tree, but RFC7951 in output assume yang 
  * populated 
  *
- * @param[in,out] cb     Cligen buffer to write to
- * @param[in]     x      XML tree to translate from
- * @param[in]     pretty Set if output is pretty-printed
- * @param[in]     autocliext How to handle autocli extensions: 0: ignore 1: follow
- * @retval        0      OK
- * @retval       -1      Error
+ * @param[in,out] cb          Cligen buffer to write to
+ * @param[in]     x           XML tree to translate from
+ * @param[in]     pretty      Set if output is pretty-printed
+ * @param[in]     autocliext  How to handle autocli extensions: 0: ignore 1: follow
+ * @param[in]     system_only Enable checks for system-only-config extension
+ * @retval        0           OK
+ * @retval       -1           Error
  *
  * @see clixon_xml2cbuf     XML corresponding function
  * @see xml2json_cbuf_vec   Top symbol is list
  */
-static int 
-xml2json_cbuf1(cbuf   *cb, 
-               cxobj  *x, 
-               int     pretty,
-               int     autocliext)
+static int
+xml2json_cbuf1(cbuf  *cb,
+               cxobj *x,
+               int    pretty,
+               int    autocliext,
+               int    system_only)
 {
     int                     retval = 1;
     int                     level = 0;
     yang_stmt              *y;
     enum array_element_type arraytype = NO_ARRAY;
     int                     exist = 0;
-        
+
     y = xml_spec(x);
     if (autocliext && y != NULL) {
         if (yang_extension_value(y, "hide-show", CLIXON_AUTOCLI_NS, &exist, NULL) < 0)
@@ -1058,10 +1084,10 @@ xml2json_cbuf1(cbuf   *cb,
         if (exist)
             goto ok;
     }
-    cprintf(cb, "%*s{%s", 
-            pretty?level*PRETTYPRINT_INDENT:0,"", 
+
+    cprintf(cb, "%*s{%s",
+            pretty?level*PRETTYPRINT_INDENT:0,"",
             pretty?"\n":"");
-    
     if (y != NULL){
         switch (yang_keyword_get(y)){
         case Y_LEAF_LIST:
@@ -1073,16 +1099,17 @@ xml2json_cbuf1(cbuf   *cb,
             break;
         }
     }
-    if (xml2json1_cbuf(cb, 
-                       x, 
+    if (xml2json1_cbuf(cb,
+                       x,
                        arraytype,
                        level+1,
                        pretty,
                        0,
+                       system_only,
                        NULL, /* ancestor modname / namespace */
                        NULL) < 0)
         goto done;
-    cprintf(cb, "%s%*s}%s", 
+    cprintf(cb, "%s%*s}%s",
             pretty?"\n":"",
             pretty?level*PRETTYPRINT_INDENT:0,"",
             pretty?"\n":"");
@@ -1097,13 +1124,14 @@ xml2json_cbuf1(cbuf   *cb,
  * XML-style namespace notation in tree, but RFC7951 in output assume yang 
  * populated 
  *
- * @param[in,out] cb      Cligen buffer to write to
- * @param[in]     xt      Top-level xml object
- * @param[in]     pretty  Set if output is pretty-printed
- * @param[in]     skiptop 0: Include top object 1: Skip top-object, only children, 
- * @param[in]     autocliext How to handle autocli extensions: 0: ignore 1: follow
- * @retval        0       OK
- * @retval       -1       Error
+ * @param[in,out] cb          Cligen buffer to write to
+ * @param[in]     xt          Top-level xml object
+ * @param[in]     pretty      Set if output is pretty-printed
+ * @param[in]     skiptop     0: Include top object 1: Skip top-object, only children,
+ * @param[in]     autocliext  How to handle autocli extensions: 0: ignore 1: follow
+ * @param[in]     system_only Enable checks for system-only-config extension
+ * @retval        0           OK
+ * @retval       -1           Error
  * @code
  *   cbuf *cb = cbuf_new();
  *   if (xml2json_cbuf(cb, xn, 0, 0, 0) < 0)
@@ -1112,12 +1140,13 @@ xml2json_cbuf1(cbuf   *cb,
  * @endcode
  * @see xml2json_cbuf where the top level object is included
  */
-int 
-clixon_json2cbuf(cbuf  *cb, 
-                 cxobj *xt, 
+int
+clixon_json2cbuf(cbuf  *cb,
+                 cxobj *xt,
                  int    pretty,
                  int    skiptop,
-                 int    autocliext)
+                 int    autocliext,
+                 int    system_only)
 {
     int    retval = -1;
     cxobj *xc;
@@ -1128,12 +1157,12 @@ clixon_json2cbuf(cbuf  *cb,
         while ((xc = xml_child_each(xt, xc, CX_ELMNT)) != NULL){
             if (i++)
                 cprintf(cb, ",");
-            if (xml2json_cbuf1(cb, xc, pretty, autocliext) < 0)
+            if (xml2json_cbuf1(cb, xc, pretty, autocliext, system_only) < 0)
                 goto done;
         }
     }
     else {
-        if (xml2json_cbuf1(cb, xt, pretty, autocliext) < 0)
+        if (xml2json_cbuf1(cb, xt, pretty, autocliext, system_only) < 0)
             goto done;
     }
     retval = 0;
@@ -1142,6 +1171,7 @@ clixon_json2cbuf(cbuf  *cb,
 }
 
 /*! Translate a vector of xml objects to JSON Cligen buffer.
+ *
  * This is done by adding a top pseudo-object, and add the vector as subs,
  * and then not printing the top pseudo-object using the 'flat' option.
  * @param[out] cb     Cligen buffer to write to
@@ -1155,8 +1185,8 @@ clixon_json2cbuf(cbuf  *cb,
  * Example: <b/><c/> --> <a><b/><c/></a> --> {"b" : null,"c" : null}
  * @see clixon_json2cbuf
  */
-int 
-xml2json_cbuf_vec(cbuf      *cb, 
+int
+xml2json_cbuf_vec(cbuf      *cb,
                   cxobj    **vec,
                   size_t     veclen,
                   int        pretty,
@@ -1168,7 +1198,7 @@ xml2json_cbuf_vec(cbuf      *cb,
     int    i;
     cxobj *xc0;
     cxobj *xc;
-    cvec  *nsc = NULL; 
+    cvec  *nsc = NULL;
 
     if ((xp = xml_new("xml2json", NULL, CX_ELMNT)) == NULL)
         goto done;
@@ -1189,30 +1219,30 @@ xml2json_cbuf_vec(cbuf      *cb,
             cvec_free(nsc);
         }
         else {
-                if ((xc = xml_dup(xc0)) == NULL)
-                    goto done;
-                xml_addsub(xp, xc);
-                nscache_replace(xc, nsc);
-            }
+            if ((xc = xml_dup(xc0)) == NULL)
+                goto done;
+            xml_addsub(xp, xc);
+            nscache_replace(xc, nsc);
+        }
         nsc = NULL; /* nsc consumed */
     }
     if (0){
         cprintf(cb, "[%s", pretty?"\n":" ");
         level++;
     }
-    if (xml2json1_cbuf(cb, 
-                       xp, 
+    if (xml2json1_cbuf(cb,
+                       xp,
                        NO_ARRAY,
                        level,
                        pretty,
-                       1, NULL, NULL) < 0)
+                       1, 0, NULL, NULL) < 0)
         goto done;
 
     if (0){
         level--;
-        cprintf(cb, "%s]%s", 
-            pretty?"\n":"",
-            pretty?"\n":""); /* top object */
+        cprintf(cb, "%s]%s",
+                pretty?"\n":"",
+                pretty?"\n":""); /* top object */
     }
     retval = 0;
  done:
@@ -1224,29 +1254,32 @@ xml2json_cbuf_vec(cbuf      *cb,
 }
 
 /*! Translate from xml tree to JSON and print to file using a callback
- * @param[in]  f       File to print to
- * @param[in]  xn      XML tree to translate from
- * @param[in]  pretty  Set if output is pretty-printed
- * @param[in]  fn       File print function (if NULL, use fprintf)
- * @param[in]  skiptop 0: Include top object 1: Skip top-object, only children, 
- * @param[in]  autocliext How to handle autocli extensions: 0: ignore 1: follow
- * @retval     0       OK
- * @retval    -1       Error
+ *
+ * @param[in]  f           File to print to
+ * @param[in]  xn          XML tree to translate from
+ * @param[in]  pretty      Set if output is pretty-printed
+ * @param[in]  fn          File print function
+ * @param[in]  skiptop 0:  Include top object 1: Skip top-object, only children,
+ * @param[in]  autocliext  How to handle autocli extensions: 0: ignore 1: follow
+ * @param[in]  system_only Enable checks for system-only-config extension
+ * @retval     0           OK
+ * @retval    -1           Error
  *
  * @note yang is necessary to translate to one-member lists,
  * eg if a is a yang LIST <a>0</a> -> {"a":["0"]} and not {"a":"0"}
  * @code
- * if (clixon_json2file(stderr, xn, 0, fprintf, 0, 0) < 0)
+ * if (clixon_json2file(stderr, xn, 0, fprintf, 0, 0, 0) < 0)
  *   goto err;
  * @endcode
  */
-int 
-clixon_json2file(FILE             *f, 
+int
+clixon_json2file(FILE             *f,
                  cxobj            *xn,
                  int               pretty,
                  clicon_output_cb *fn,
                  int               skiptop,
-                 int               autocliext)
+                 int               autocliext,
+                 int               system_only)
 {
     int   retval = 1;
     cbuf *cb = NULL;
@@ -1254,10 +1287,10 @@ clixon_json2file(FILE             *f,
     if (fn == NULL)
         fn = fprintf;
     if ((cb = cbuf_new()) ==NULL){
-        clicon_err(OE_XML, errno, "cbuf_new");
+        clixon_err(OE_XML, errno, "cbuf_new");
         goto done;
     }
-    if (clixon_json2cbuf(cb, xn, pretty, skiptop, autocliext) < 0)
+    if (clixon_json2cbuf(cb, xn, pretty, skiptop, autocliext, system_only) < 0)
         goto done;
     (*fn)(f, "%s", cbuf_get(cb));
     retval = 0;
@@ -1273,19 +1306,21 @@ clixon_json2file(FILE             *f,
  * @param[in]   xn          clicon xml tree
  */
 int
-json_print(FILE  *f, 
+json_print(FILE  *f,
            cxobj *x)
 {
-    return clixon_json2file(f, x, 1, fprintf, 0, 0);
+    return clixon_json2file(f, x, 1, fprintf, 0, 0, 0);
 }
 
 /*! Translate a vector of xml objects to JSON File.
+ *
  * This is done by adding a top pseudo-object, and add the vector as subs,
  * and then not pritning the top pseudo-.object using the 'flat' option.
  * @param[out] cb     Cligen buffer to write to
  * @param[in]  vec    Vector of xml objecst
  * @param[in]  veclen Length of vector
  * @param[in]  pretty Set if output is pretty-printed (2 for debug)
+ * @param[in]  fn       File print function 
  * @param[in]  skiptop 0: Include top object 1: Skip top-object, only children, 
  * @retval     0      OK
  * @retval    -1      Error
@@ -1293,23 +1328,24 @@ json_print(FILE  *f,
  * Example: <b/><c/> --> <a><b/><c/></a> --> {"b" : null,"c" : null}
  * @see xml2json1_cbuf
  */
-int 
-xml2json_vec(FILE      *f, 
-             cxobj    **vec,
-             size_t     veclen,
-             int        pretty,
-             int        skiptop)
+int
+xml2json_vec(FILE             *f,
+             cxobj           **vec,
+             size_t            veclen,
+             int               pretty,
+             clicon_output_cb *fn,
+             int               skiptop)
 {
     int   retval = 1;
     cbuf *cb = NULL;
 
     if ((cb = cbuf_new()) == NULL){
-        clicon_err(OE_XML, errno, "cbuf_new");
+        clixon_err(OE_XML, errno, "cbuf_new");
         goto done;
     }
     if (xml2json_cbuf_vec(cb, vec, veclen, pretty, skiptop) < 0)
         goto done;
-    fprintf(f, "%s\n", cbuf_get(cb));
+    (*fn)(f, "%s\n", cbuf_get(cb));
     retval = 0;
  done:
     if (cb)
@@ -1318,6 +1354,7 @@ xml2json_vec(FILE      *f,
 }
 
 /*! Translate from JSON module:name to XML default ns: xmlns="uri" recursively
+ *
  * Assume an xml tree where prefix:name have been split into "module":"name"
  * In other words, from JSON to XML namespace trees
  * 
@@ -1342,9 +1379,9 @@ json_xmlns_translate(yang_stmt *yspec,
     char      *modname = NULL;
     cxobj     *xc;
     int        ret;
-    
+
     if ((modname = xml_prefix(x)) != NULL){ /* prefix is here module name */
-        /* Special case for ietf-netconf -> ietf-restconf translation 
+        /* Special case for ietf-netconf -> ietf-restconf translation
          * A special case is for return data on the form {"data":...}
          * See also xml2json1_cbuf
          */
@@ -1394,16 +1431,16 @@ json_xmlns_translate(yang_stmt *yspec,
  * @param[in]  yspec  Yang specification (if rfc 7951)
  * @param[out] xt     XML top of tree typically w/o children on entry (but created)
  * @param[out] xerr   Reason for invalid returned as netconf err msg 
+ * @retval     1      OK and valid
+ * @retval     0      Invalid (only if yang spec)
+ * @retval    -1      Error
  * 
  * @see _xml_parse for XML variant
- * @retval        1   OK and valid
- * @retval        0   Invalid (only if yang spec)
- * @retval       -1   Error with clicon_err called
  * @see http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf
  * @see RFC 7951
  */
-static int 
-_json_parse(char      *str, 
+static int
+_json_parse(char      *str,
             int        rfc7951,
             yang_bind  yb,
             yang_stmt *yspec,
@@ -1417,8 +1454,8 @@ _json_parse(char      *str,
     cbuf            *cberr = NULL;
     int              i;
     int              failed = 0; /* yang assignment */
-    
-    clicon_debug(1, "%s %d %s", __FUNCTION__, yb, str);
+
+    clixon_debug(CLIXON_DBG_PARSE, "%s", str);
     jy.jy_parse_string = str;
     jy.jy_linenum = 1;
     jy.jy_current = xt;
@@ -1428,9 +1465,9 @@ _json_parse(char      *str,
     if (json_parse_init(&jy) < 0)
         goto done;
     if (clixon_json_parseparse(&jy) != 0) { /* yacc returns 1 on error */
-        clicon_log(LOG_NOTICE, "JSON error: line %d", jy.jy_linenum);
-        if (clicon_errno == 0)
-            clicon_err(OE_JSON, 0, "JSON parser error with no error code (should not happen)");
+        clixon_log(NULL, LOG_NOTICE, "JSON error: line %d", jy.jy_linenum);
+        if (clixon_err_category() == 0)
+            clixon_err(OE_JSON, 0, "JSON parser error with no error code (should not happen)");
         goto done;
     }
     /* Traverse new objects */
@@ -1443,7 +1480,7 @@ _json_parse(char      *str,
             /* XXX: For top-level config file: */
             if (yb != YB_NONE || strcmp(xml_name(x),DATASTORE_TOP_SYMBOL)!=0){
                 if ((cberr = cbuf_new()) == NULL){
-                    clicon_err(OE_UNIX, errno, "cbuf_new");
+                    clixon_err(OE_UNIX, errno, "cbuf_new");
                     goto done;
                 }
                 cprintf(cberr, "Top-level JSON object %s is not qualified with namespace which is a MUST according to RFC 7951", xml_name(x));
@@ -1463,7 +1500,7 @@ _json_parse(char      *str,
         switch (yb){
         case YB_PARENT:
             if ((ret = xml_bind_yang0(NULL, x, yb, yspec, xerr)) < 0)
-                    goto done;
+                goto done;
             if (ret == 0)
                 failed++;
             break;
@@ -1481,7 +1518,7 @@ _json_parse(char      *str,
             break;
         case YB_NONE:
             break;
-        case YB_RPC: 
+        case YB_RPC:
             if ((ret = xml_bind_yang_rpc(NULL, x, yspec, xerr)) < 0)
                 goto done;
             if (ret == 0)
@@ -1504,14 +1541,14 @@ _json_parse(char      *str,
             goto done;
     retval = 1;
  done:
-    clicon_debug(1, "%s retval:%d", __FUNCTION__, retval);
+    clixon_debug(CLIXON_DBG_PARSE, "retval:%d", retval);
     if (cberr)
         cbuf_free(cberr);
     json_parse_exit(&jy);
     json_scan_exit(&jy);
     if (jy.jy_xvec)
         free(jy.jy_xvec);
-    return retval; 
+    return retval;
  fail: /* invalid */
     retval = 0;
     goto done;
@@ -1527,7 +1564,7 @@ _json_parse(char      *str,
  * @param[out]    xerr  Reason for invalid returned as netconf err msg 
  * @retval        1     OK and valid
  * @retval        0     Invalid (only if yang spec) w xerr set
- * @retval       -1     Error with clicon_err called
+ * @retval       -1     Error
  *
  * @code
  *  cxobj *x = NULL;
@@ -1539,17 +1576,17 @@ _json_parse(char      *str,
  * @see clixon_xml_parse_string  XML instead of JSON
  * @see clixon_json_parse_file   From a file
  */
-int 
-clixon_json_parse_string(char      *str, 
+int
+clixon_json_parse_string(char      *str,
                          int        rfc7951,
                          yang_bind  yb,
                          yang_stmt *yspec,
                          cxobj    **xt,
                          cxobj    **xerr)
 {
-    clicon_debug(1, "%s", __FUNCTION__);
+    clixon_debug(CLIXON_DBG_DEFAULT, "");
     if (xt==NULL){
-        clicon_err(OE_JSON, EINVAL, "xt is NULL");
+        clixon_err(OE_JSON, EINVAL, "xt is NULL");
         return -1;
     }
     if (*xt == NULL){
@@ -1577,6 +1614,9 @@ clixon_json_parse_string(char      *str,
  * @param[in]     yspec Yang specification, or NULL
  * @param[in,out] xt    Pointer to (XML) parse tree. If empty, create.
  * @param[out]    xerr  Reason for invalid returned as netconf err msg 
+ * @retval        1     OK and valid
+ * @retval        0     Invalid (only if yang spec) w xerr set
+ * @retval       -1     Error
  *
  * @code
  *  cxobj *xt = NULL;
@@ -1587,11 +1627,6 @@ clixon_json_parse_string(char      *str,
  * @note  you need to free the xml parse tree after use, using xml_free()
  * @note, If xt empty, a top-level symbol will be added so that <tree../> will be:  <top><tree.../></tree></top>
  * @note May block on file I/O
- *
- * @retval        1     OK and valid
- * @retval        0     Invalid (only if yang spec) w xerr set
- * @retval       -1     Error with clicon_err called
- *
  * @see clixon_json_parse_string
  * @see RFC7951
  */
@@ -1613,18 +1648,18 @@ clixon_json_parse_file(FILE      *fp,
     int       len = 0;
 
     if (xt==NULL){
-        clicon_err(OE_JSON, EINVAL, "xt is NULL");
+        clixon_err(OE_JSON, EINVAL, "xt is NULL");
         return -1;
     }
     if ((jsonbuf = malloc(jsonbuflen)) == NULL){
-        clicon_err(OE_JSON, errno, "malloc");
+        clixon_err(OE_JSON, errno, "malloc");
         goto done;
     }
     memset(jsonbuf, 0, jsonbuflen);
     ptr = jsonbuf;
     while (1){
         if ((ret = fread(&ch, 1, 1, fp)) < 0){
-            clicon_err(OE_JSON, errno, "read");
+            clixon_err(OE_JSON, errno, "read");
             break;
         }
         if (ret != 0)
@@ -1645,7 +1680,7 @@ clixon_json_parse_file(FILE      *fp,
             oldjsonbuflen = jsonbuflen;
             jsonbuflen *= 2;
             if ((jsonbuf = realloc(jsonbuf, jsonbuflen)) == NULL){
-                clicon_err(OE_JSON, errno, "realloc");
+                clixon_err(OE_JSON, errno, "realloc");
                 goto done;
             }
             memset(jsonbuf+oldjsonbuflen, 0, jsonbuflen-oldjsonbuflen);
@@ -1660,10 +1695,8 @@ clixon_json_parse_file(FILE      *fp,
     }
     if (jsonbuf)
         free(jsonbuf);
-    return retval;    
+    return retval;
  fail:
     retval = 0;
     goto done;
 }
-
-

@@ -55,17 +55,22 @@
 /* cligen */
 #include <cligen/cligen.h>
 
-/* clicon */
-#include "clixon_err.h"
+/* clixon */
 #include "clixon_queue.h"
+#include "clixon_hash.h"
+#include "clixon_handle.h"
 #include "clixon_string.h"
+#include "clixon_yang.h"
+#include "clixon_xml.h"
+#include "clixon_err.h"
 #include "clixon_log.h"
+#include "clixon_debug.h"
 #include "clixon_file.h"
 
 /*! qsort "compar" for directory alphabetically sorting, see qsort(3)
  */
 static int
-clicon_file_dirent_sort(const void* arg1, 
+clicon_file_dirent_sort(const void* arg1,
                         const void* arg2)
 {
     struct dirent *d1 = (struct dirent *)arg1;
@@ -74,7 +79,8 @@ clicon_file_dirent_sort(const void* arg1,
     return strcoll(d1->d_name, d2->d_name);
 }
 
-/*!
+/*! List files recursive
+ *
  * @param[in,out] cvv  On the format: (name, path)*
  */
 static int
@@ -82,15 +88,14 @@ clicon_files_recursive1(const char *dir,
                         regex_t    *re,
                         cvec       *cvv)
 {
-    int retval = -1;
-    struct  dirent *dent = NULL;
-    char    path[MAXPATHLEN];
-    DIR     *dirp = NULL;
-    int     res = 0;
-    struct stat    st;
-    
+    int            retval = -1;
+    struct dirent *dent = NULL;
+    char           path[MAXPATHLEN];
+    DIR           *dirp = NULL;
+    struct stat    st = {0,};
+
     if (dir == NULL){
-        clicon_err(OE_UNIX, EINVAL, "Requires dir != NULL");
+        clixon_err(OE_UNIX, EINVAL, "Requires dir != NULL");
         goto done;
     }
     if ((dirp = opendir(dir)) != NULL)
@@ -98,7 +103,7 @@ clicon_files_recursive1(const char *dir,
             if (dent->d_type == DT_DIR) {
                 /* If we find a directory we might want to enter it, unless it
                    is the current directory (.) or parent (..) */
-                if (strcmp(dent->d_name, ".") == 0 || strcmp(dent->d_name, "..") == 0) 
+                if (strcmp(dent->d_name, ".") == 0 || strcmp(dent->d_name, "..") == 0)
                     continue;
 
                 /* Build the new directory and enter it. */
@@ -113,14 +118,14 @@ clicon_files_recursive1(const char *dir,
                     regexec(re, dent->d_name, (size_t)0, NULL, 0) != 0)
                     continue;
                 snprintf(path, MAXPATHLEN-1, "%s/%s", dir, dent->d_name);
-                if ((res = lstat(path, &st)) != 0){
-                    clicon_err(OE_UNIX, errno, "lstat");
+                if (lstat(path, &st) < 0){
+                    clixon_err(OE_UNIX, errno, "lstat");
                     goto done;
                 }
                 if ((st.st_mode & S_IFREG) == 0)
                     continue;
                 if (cvec_add_string(cvv, dent->d_name, path) < 0){
-                    clicon_err(OE_UNIX, errno, "cvec_add_string");
+                    clixon_err(OE_UNIX, errno, "cvec_add_string");
                     goto done;
                 }
             }
@@ -143,11 +148,11 @@ clicon_files_recursive(const char *dir,
     regex_t re = {0,};
     int     res = 0;
     char    errbuf[128];
- 
-    clicon_debug(CLIXON_DBG_DETAIL, "%s dir:%s", __FUNCTION__, dir);
+
+    clixon_debug(CLIXON_DBG_DEFAULT | CLIXON_DBG_DETAIL, "dir:%s", dir);
     if (regexp && (res = regcomp(&re, regexp, REG_EXTENDED)) != 0) {
         regerror(res, &re, errbuf, sizeof(errbuf));
-        clicon_err(OE_DB, 0, "regcomp: %s", errbuf);
+        clixon_err(OE_DB, 0, "regcomp: %s", errbuf);
         goto done;
     }
     if (clicon_files_recursive1(dir, &re, cvv) < 0)
@@ -165,14 +170,14 @@ clicon_files_recursive(const char *dir,
  * @param[out] ent     Entries pointer, will be filled in with dir entries. Free after use
  * @param[in]  regexp  Regexp filename matching 
  * @param[in]  type    File type matching, see stat(2) 
- *
  * @retval  n  Number of matching files in directory
  * @retval -1  Error
  *
  * @code
  *   char          *dir = "/root/fs";
  *   struct dirent *dp;
- *   if ((ndp = clicon_file_dirent(dir, &dp, "(.so)$", S_IFREG)) < 0)
+ *   int            ndp;
+ *   if ((ndp = clicon_file_dirent(dir, &dp, "\\.so$", S_IFREG)) < 0)
  *       return -1;
  *   for (i = 0; i < ndp; i++) 
  *       do something with dp[i].d_name;
@@ -206,17 +211,19 @@ clicon_file_dirent(const char     *dir,
    nent = 0;
    if (regexp && (res = regcomp(&re, regexp, REG_EXTENDED)) != 0) {
        regerror(res, &re, errbuf, sizeof(errbuf));
-       clicon_err(OE_DB, 0, "regcomp: %s", errbuf);
+       clixon_err(OE_DB, 0, "regcomp: %s", errbuf);
        return -1;
    }
    if ((dirp = opendir(dir)) == NULL) {
      if (errno == ENOENT) /* Dir does not exist -> return 0 matches */
        retval = 0;
      else
-       clicon_err(OE_UNIX, errno, "opendir(%s)", dir);
+       clixon_err(OE_UNIX, errno, "opendir(%s)", dir);
      goto quit;
    }
    while((dent = readdir(dirp)) != NULL) {
+       if (strcmp(dent->d_name, ".") == 0 || strcmp(dent->d_name, "..") == 0)
+           continue;
        /* Filename matching */
        if (regexp) {
            if (regexec(&re, dent->d_name, (size_t) 0, NULL, 0) != 0)
@@ -227,7 +234,7 @@ clicon_file_dirent(const char     *dir,
            snprintf(filename, MAXPATHLEN-1, "%s/%s", dir, dent->d_name);
            res = lstat(filename, &st);
            if (res != 0) {
-               clicon_err(OE_UNIX, errno, "lstat");
+               clixon_err(OE_UNIX, errno, "lstat");
                goto quit;
            }
            if ((type & st.st_mode) == 0)
@@ -235,10 +242,10 @@ clicon_file_dirent(const char     *dir,
        }
        direntStructSize = offsetof(struct dirent, d_name) + strlen(dent->d_name) + 1;
        if ((new = realloc(new, (nent+1)*sizeof(struct dirent))) == NULL) {
-           clicon_err(OE_UNIX, errno, "realloc");
+           clixon_err(OE_UNIX, errno, "realloc");
            goto quit;
        } /* realloc */
-       clicon_debug(CLIXON_DBG_DETAIL, "%s memcpy(%p %p %u", __FUNCTION__, &new[nent], dent, direntStructSize);
+       clixon_debug(CLIXON_DBG_DEFAULT | CLIXON_DBG_DETAIL, "memcpy(%p %p %u", &new[nent], dent, direntStructSize);
        /* man (3) readdir: 
         * By implication, the  use sizeof(struct dirent) to capture the size of the record including 
         * the size of d_name is also incorrect. */
@@ -246,7 +253,6 @@ clicon_file_dirent(const char     *dir,
        memcpy(&new[nent], dent, direntStructSize);
        nent++;
    } /* while */
-
    qsort((void *)new, nent, sizeof(*new), clicon_file_dirent_sort);
    *ent = new;
    new = NULL;
@@ -266,10 +272,11 @@ quit:
  * @param[in]  src     Source filename
  * @param[out] target  Destination filename
  * @retval     0       OK
- * @retval     -1      Error
+ * @retval    -1       Error
+ * XXX This is probably faster with stdio?
  */
 int
-clicon_file_copy(char *src, 
+clicon_file_copy(char *src,
                  char *target)
 {
     int         retval = -1;
@@ -280,21 +287,21 @@ clicon_file_copy(char *src,
     struct stat st;
 
     if (stat(src, &st) != 0){
-        clicon_err(OE_UNIX, errno, "stat");
+        clixon_err(OE_UNIX, errno, "stat");
         return -1;
     }
     if((inF = open(src, O_RDONLY)) == -1) {
-        clicon_err(OE_UNIX, errno, "open(%s) for read", src);
+        clixon_err(OE_UNIX, errno, "open(%s) for read", src);
         return -1;
     }
     if((ouF = open(target, O_WRONLY | O_CREAT | O_TRUNC, st.st_mode)) == -1) {
-        clicon_err(OE_UNIX, errno, "open(%s) for write", target);
+        clixon_err(OE_UNIX, errno, "open(%s) for write", target);
         err = errno;
         goto error;
     }
     while((bytes = read(inF, line, sizeof(line))) > 0)
         if (write(ouF, line, bytes) < 0){
-            clicon_err(OE_UNIX, errno, "write(%s)", src);
+            clixon_err(OE_UNIX, errno, "write(%s)", src);
             err = errno;
             goto error;
         }
@@ -308,15 +315,52 @@ clicon_file_copy(char *src,
     return retval;
 }
 
+/*! Make a copy of directory non-recursive
+ *
+ * @param[in]  srcdir  Source dirname
+ * @param[out] dstdir  Destination dirname
+ * @retval     0       OK
+ * @retval    -1       Error
+ */
+int
+clicon_dir_copy(char *srcdir,
+                char *dstdir)
+{
+    int            retval = -1;
+    struct dirent *dent = NULL;
+    DIR           *dirp = NULL;
+    char           srcfile[MAXPATHLEN];
+    char           dstfile[MAXPATHLEN];
+
+    if (srcdir == NULL || dstdir == NULL){
+        clixon_err(OE_UNIX, EINVAL, "Requires src and dst dir != NULL");
+        goto done;
+    }
+    if ((dirp = opendir(srcdir)) != NULL)
+        while ((dent = readdir(dirp)) != NULL) {
+            if (dent->d_type != DT_REG)
+                continue;
+            snprintf(srcfile, MAXPATHLEN-1, "%s/%s", srcdir, dent->d_name);
+            snprintf(dstfile, MAXPATHLEN-1, "%s/%s", dstdir, dent->d_name);
+            if (clicon_file_copy(srcfile, dstfile) < 0)
+                goto done;
+        }
+    retval = 0;
+ done:
+    if (dirp)
+        closedir(dirp);
+    return retval;
+}
+
 /*! Read content of file into cbuf
  *
  * @param[in]   filename
  * @param[out]  cb
- * @retval 0    OK
- * @retval -1   Error
+ * @retval      0        OK
+ * @retval     -1        Error
  */
 int
-clicon_file_cbuf(const char *filename, 
+clicon_file_cbuf(const char *filename,
                  cbuf       *cb)
 {
     int         retval = -1;
@@ -327,16 +371,16 @@ clicon_file_cbuf(const char *filename,
     struct stat st;
 
     if (stat(filename, &st) != 0){
-        clicon_err(OE_UNIX, errno, "stat");
+        clixon_err(OE_UNIX, errno, "stat");
         return -1;
     }
     if ((fd = open(filename, O_RDONLY)) == -1) {
-        clicon_err(OE_UNIX, errno, "open(%s) for read", filename);
+        clixon_err(OE_UNIX, errno, "open(%s) for read", filename);
         return -1;
     }
     while((bytes = read(fd, line, sizeof(line))) > 0)
         if (cbuf_append_buf(cb, line, bytes) < 0){
-            clicon_err(OE_UNIX, errno, "cbuf_append_buf(%s)", filename);
+            clixon_err(OE_UNIX, errno, "cbuf_append_buf(%s)", filename);
             err = errno;
             goto error;
         }

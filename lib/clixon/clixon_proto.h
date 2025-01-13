@@ -43,15 +43,10 @@
 /*
  * Types
  */
-enum format_enum{
-    FORMAT_XML,  
-    FORMAT_JSON,  
-    FORMAT_TEXT,  
-    FORMAT_CLI,
-    FORMAT_NETCONF
-};
 
-/* Protocol message header */
+/*! Protocol message header (histoorical)
+ * Current use is a shim layer for sending packets
+ */
 struct clicon_msg {
     uint32_t    op_len;     /* length of whole message: body+header, network byte order. */
     uint32_t    op_id;      /* session-id. network byte order. 1..max(u32), can be zero in client hello */
@@ -60,43 +55,27 @@ struct clicon_msg {
 
 /*
  * Prototypes
- */ 
-char *format_int2str(enum format_enum showas);
-enum format_enum format_str2int(char *str);
+ */
+int clixon_inet2sin(const char *addrtype, const char *addrstr, uint16_t port, struct sockaddr *sa, size_t *sa_len);
 
 struct clicon_msg *clicon_msg_encode(uint32_t id, const char *format, ...) __attribute__ ((format (printf, 2, 3)));
-int clicon_msg_decode(struct clicon_msg *msg, yang_stmt *yspec, uint32_t *id, cxobj **xml, cxobj **xerr);
-
-int clicon_connect_unix(clicon_handle h, char *sockpath);
-
-
-int clicon_rpc_connect_unix(clicon_handle         h,
+int clicon_connect_unix(clixon_handle h, char *sockpath);
+int clicon_rpc_connect_unix(clixon_handle         h,
                             char                 *sockpath,
                             int                  *sock0);
-
-int clicon_rpc_connect_inet(clicon_handle         h,
-                            char                 *dst, 
+int clicon_rpc_connect_inet(clixon_handle         h,
+                            char                 *dst,
                             uint16_t              port,
                             int                  *sock0);
+/* NETCONF 1.0 */
+int clixon_msg_rcv10(int s, const char *descr, cbuf *cb, int *eof);
+int clixon_msg_send10(int s, const char *descr, cbuf *cb);
+int clixon_rpc10(int sock, const char *descr, cbuf *msgin, cbuf *msgret, int *eof);
 
-int clicon_rpc(int sock, struct clicon_msg *msg, char **xret, int *eof);
-
-int clicon_rpc1(int sock, cbuf *msgin, cbuf *msgret, int *eof);
-
-int clicon_msg_send(int s, struct clicon_msg *msg);
-
-int clicon_msg_send1(int s, cbuf *cb);
-
-int clicon_msg_rcv(int s, struct clicon_msg **msg, int *eof);
-
-int clicon_msg_rcv1(int s, cbuf *cb, int *eof);
-
-int send_msg_notify_xml(clicon_handle h, int s, cxobj *xev);
-
-int send_msg_reply(int s, char *data, uint32_t datalen);
-
-int detect_endtag(char *tag, char  ch, int  *state);
-
-int clixon_inet2sin(const char *addrtype, const char *addrstr, uint16_t port, struct sockaddr *sa, size_t *sa_len);
+/* NETCONF 1.1 */
+int clixon_msg_rcv11(int s, const char *descr, int intr, cbuf **cb, int *eof);
+int clicon_rpc(int sock, const char *descr, struct clicon_msg *msg, char **xret, int *eof);
+int send_msg_reply(int s, const char *descr, char *data, uint32_t datalen);
+int send_msg_notify_xml(clixon_handle h, int s, const char *descr, cxobj *xev);
 
 #endif  /* _CLIXON_PROTO_H_ */

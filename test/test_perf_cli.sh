@@ -58,14 +58,14 @@ cat <<EOF > $cfg
   <CLICON_YANG_DIR>$dir</CLICON_YANG_DIR>
   <CLICON_YANG_DIR>${YANG_INSTALLDIR}</CLICON_YANG_DIR>
   <CLICON_YANG_MAIN_FILE>$fyang</CLICON_YANG_MAIN_FILE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/example/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_XMLDB_PRETTY>false</CLICON_XMLDB_PRETTY>
   <CLICON_XMLDB_FORMAT>$format</CLICON_XMLDB_FORMAT>
   <CLICON_CLI_MODE>example</CLICON_CLI_MODE>
-  <CLICON_CLI_DIR>/usr/local/lib/example/cli</CLICON_CLI_DIR>
-  <CLICON_CLISPEC_DIR>/usr/local/lib/example/clispec</CLICON_CLISPEC_DIR>
+  <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
+  <CLICON_CLISPEC_DIR>/usr/local/lib/$APPNAME/clispec</CLICON_CLISPEC_DIR>
   <CLICON_CLI_LINESCROLLING>0</CLICON_CLI_LINESCROLLING>
   <CLICON_FEATURE>ietf-netconf:startup</CLICON_FEATURE>
 </clixon-config>
@@ -87,24 +87,29 @@ new "wait backend"
 wait_backend
 
 new "generate config with $perfnr list entries"
-echo -n "<rpc><edit-config><target><candidate/></target><config><x xmlns=\"urn:example:clixon\">" > $fconfig
+rpc="<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><x xmlns=\"urn:example:clixon\">" > $fconfig
 for (( i=0; i<$perfnr; i++ )); do  
-    echo -n "<y><a>$i</a><b>$i</b></y>" >> $fconfig
+    rpc+="<y><a>$i</a><b>$i</b></y>"
 done
-echo "</x></config></edit-config></rpc>]]>]]>" >> $fconfig
+rpc+="</x></config></edit-config></rpc>"
+
+echo -n "$DEFAULTHELLO" > $fconfig
+echo "$(chunked_framing "$rpc")" >> $fconfig
 
 # Now take large config file and write it via netconf to candidate
 new "test time exists"
-expectpart "$(time -p ls)" 0 
+expectpart "$(time -p ls)" 0  2>&1 | awk '/real/ {print $2}'
 
 new "netconf write large config"
-expecteof_file "time -p $clixon_netconf -qef $cfg" 0 "$fconfig" "^<rpc-reply><ok/></rpc-reply>]]>]]>$" 2>&1 | awk '/real/ {print $2}'
+# One extra without time for potential error
+expecteof_file "time -p $clixon_netconf -qef $cfg" 0 "$fconfig" "^<rpc-reply $DEFAULTNS><ok/></rpc-reply>$" 2>&1 | awk '/real/ {print $2}'
 
 # Here, there are $perfnr entries in candidate
 
 # Now commit it from candidate to running 
 new "netconf commit large config"
-expecteof "time -p $clixon_netconf -qef $cfg" 0 "<rpc><commit/></rpc>]]>]]>" "^<rpc-reply><ok/></rpc-reply>]]>]]>$" 2>&1 | awk '/real/ {print $2}'
+rpc=$(chunked_framing "<rpc $DEFAULTNS><commit/></rpc>")
+expecteof_netconf "time -p $clixon_netconf -qef $cfg" 0 "$DEFAULTHELLO" "$rpc" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>" 2>&1 | awk '/real/ {print $2}'
 
 # CLI get. This takes a lot of time because expand_dbvar gets perfnr (eg 100000) entries
 # and loops over it.
@@ -134,18 +139,21 @@ done } 2>&1 | awk '/real/ {print $2}'
 
 # Now do leaf-lists instead of leafs
 
-#new "generate leaf-list config"
-echo -n "<rpc><edit-config><target><candidate/></target><default-operation>replace</default-operation><config><x xmlns=\"urn:example:clixon\">" > $fconfig2
+new "generate leaf-list config"
+rpc="<rpc $DEFAULTNS><edit-config><target><candidate/></target><default-operation>replace</default-operation><config><x xmlns=\"urn:example:clixon\">"
 for (( i=0; i<$perfnr; i++ )); do  
-    echo -n "<c>$i</c>" >> $fconfig2
+    rpc+="<c>$i</c>"
 done
-echo "</x></config></edit-config></rpc>]]>]]>" >> $fconfig2
+rpc+="</x></config></edit-config></rpc>"
+echo -n "$DEFAULTHELLO" > $fconfig2
+echo "$(chunked_framing "$rpc")" >> $fconfig2
 
 new "netconf replace large list-leaf config"
-expecteof_file "time -p $clixon_netconf -qef $cfg" 0 "$fconfig2" "^<rpc-reply><ok/></rpc-reply>]]>]]>$" 2>&1 | awk '/real/ {print $2}'
+expecteof_file "time -p $clixon_netconf -qef $cfg" 0 "$fconfig2" "^<rpc-reply $DEFAULTNS><ok/></rpc-reply>$" 2>&1 | awk '/real/ {print $2}'
 
 new "netconf commit large leaf-list config"
-expecteof "time -p $clixon_netconf -qef $cfg" 0 "<rpc><commit/></rpc>]]>]]>" "^<rpc-reply><ok/></rpc-reply>]]>]]>$" 2>&1 | awk '/real/ {print $2}'
+rpc=$(chunked_framing "<rpc $DEFAULTNS><commit/></rpc>")
+expecteof "time -p $clixon_netconf -qef $cfg" 0 "$rpc" "^<rpc-reply $DEFAULTNS><ok/></rpc-reply>$" 2>&1 | awk '/real/ {print $2}'
 
 # XXX No leafref cli tests
 
@@ -161,11 +169,6 @@ if [ $BE -ne 0 ]; then
 fi
 
 rm -rf $dir
-
-# unset conditional parameters 
-unset format
-unset perfnr
-unset perfreq
 
 new "endtest"
 endtest

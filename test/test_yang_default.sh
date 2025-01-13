@@ -30,7 +30,7 @@ cat <<EOF > $cfg
   <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
   <CLICON_SOCK>$dir/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_XMLDB_PRETTY>false</CLICON_XMLDB_PRETTY>
 </clixon-config>
@@ -114,13 +114,13 @@ if [ $? -ne 0 ]; then
 fi
 
 new "check running defaults (report-all)"
-expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get-config><with-defaults xmlns=\"urn:ietf:params:xml:ns:yang:ietf-netconf-with-defaults\">report-all</with-defaults><source><running/></source></get-config></rpc>" "" "<rpc-reply $DEFAULTNS><data><a xmlns=\"urn:example:default\"><d0>88</d0><b><c>0</c><d1>foo</d1><d2>42</d2></b></a></data></rpc-reply>"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get-config><with-defaults xmlns=\"urn:ietf:params:xml:ns:yang:ietf-netconf-with-defaults\">report-all</with-defaults><source><running/></source></get-config></rpc>" "<rpc-reply $DEFAULTNS><data><a xmlns=\"urn:example:default\"><d0>88</d0><b><c>0</c><d1>foo</d1><d2>42</d2></b></a>"
 
 new "check running defaults"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get-config><source><running/></source></get-config></rpc>" "" "<rpc-reply $DEFAULTNS><data><a xmlns=\"urn:example:default\"><b><c>0</c></b></a></data></rpc-reply>"
 
 new "delete existing list element"
-expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS xmlns:nc=\"urn:ietf:params:xml:ns:netconf:base:1.0\"><edit-config><target><candidate/></target><config><a xmlns=\"urn:example:default\"><b nc:operation=\"delete\"><c>0</c></b></a></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS xmlns:nc=\"urn:ietf:params:xml:ns:netconf:base:1.0\"><ok/></rpc-reply>"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS xmlns:nc=\"${BASENS}\"><edit-config><target><candidate/></target><config><a xmlns=\"urn:example:default\"><b nc:operation=\"delete\"><c>0</c></b></a></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS xmlns:nc=\"${BASENS}\"><ok/></rpc-reply>"
 
 new "netconf commit"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS ><commit/></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
@@ -129,7 +129,7 @@ new "set new list element"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><a xmlns=\"urn:example:default\"><b><c>17</c></b></a></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
 
 new "get the list top (report-all)"
-expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get-config><with-defaults xmlns=\"urn:ietf:params:xml:ns:yang:ietf-netconf-with-defaults\">report-all</with-defaults><source><candidate/></source></get-config></rpc>" "" "<rpc-reply $DEFAULTNS><data><a xmlns=\"urn:example:default\"><d0>88</d0><b><c>17</c><d1>foo</d1><d2>42</d2></b></a></data></rpc-reply>"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get-config><with-defaults xmlns=\"urn:ietf:params:xml:ns:yang:ietf-netconf-with-defaults\">report-all</with-defaults><source><candidate/></source></get-config></rpc>" "<rpc-reply $DEFAULTNS><data><a xmlns=\"urn:example:default\"><d0>88</d0><b><c>17</c><d1>foo</d1><d2>42</d2></b></a>"
 
 new "get the list top"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get-config><source><candidate/></source></get-config></rpc>" "" "<rpc-reply $DEFAULTNS><data><a xmlns=\"urn:example:default\"><b><c>17</c></b></a></data></rpc-reply>"
@@ -176,8 +176,6 @@ if [ $BE -ne 0 ]; then     # Bring your own backend
 fi
 
 rm -rf $dir
-
-unset ret
 
 new "endtest"
 endtest

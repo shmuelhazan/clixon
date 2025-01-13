@@ -4,7 +4,7 @@
  
   Copyright (C) 2009-2016 Olof Hagsand and Benny Holmgren
   Copyright (C) 2017-2019 Olof Hagsand
-  Copyright (C) 2020-2022 Olof Hagsand and Rubicon Communications, LLC(Netgate)
+  Copyright (C) 2020-2023 Olof Hagsand and Rubicon Communications, LLC(Netgate)
 
   This file is part of CLIXON.
 
@@ -62,62 +62,60 @@
 #include <cligen/cligen.h>
 
 /* clixon */
-#include "clixon_err.h"
-#include "clixon_string.h"
+
 #include "clixon_queue.h"
 #include "clixon_hash.h"
 #include "clixon_handle.h"
-#include "clixon_file.h"
-#include "clixon_log.h"
 #include "clixon_yang.h"
 #include "clixon_xml.h"
+#include "clixon_err.h"
+#include "clixon_log.h"
+#include "clixon_debug.h"
+#include "clixon_map.h"
+#include "clixon_file.h"
+#include "clixon_json.h"
+#include "clixon_text_syntax.h"
+#include "clixon_proto.h"
 #include "clixon_options.h"
 #include "clixon_data.h"
 #include "clixon_xpath_ctx.h"
 #include "clixon_xpath.h"
 #include "clixon_yang_parse_lib.h"
 #include "clixon_netconf_lib.h"
+#include "clixon_xml_sort.h"
 #include "clixon_xml_nsctx.h"
 #include "clixon_xml_io.h"
+#include "clixon_xml_map.h"
 #include "clixon_validate.h"
 #include "clixon_xml_default.h"
 
 /* Mapping between Clicon startup modes string <--> constants, 
    see clixon-config.yang type startup_mode */
 static const map_str2int startup_mode_map[] = {
-    {"none",            SM_NONE}, 
-    {"init",            SM_INIT}, 
-    {"running",         SM_RUNNING}, 
+    {"none",            SM_NONE},
+    {"init",            SM_INIT},
+    {"running",         SM_RUNNING},
     {"startup",         SM_STARTUP},
-    {"running-startup", SM_RUNNING_STARTUP}, 
+    {"running-startup", SM_RUNNING_STARTUP},
     {NULL,              -1}
 };
 
 /* Mapping between Clicon privileges modes string <--> constants, 
  * see clixon-config.yang type priv_mode */
 static const map_str2int priv_mode_map[] = {
-    {"none",      PM_NONE}, 
-    {"drop_perm", PM_DROP_PERM}, 
-    {"drop_temp", PM_DROP_TEMP}, 
+    {"none",      PM_NONE},
+    {"drop_perm", PM_DROP_PERM},
+    {"drop_temp", PM_DROP_TEMP},
     {NULL,        -1}
 };
 
 /* Mapping between Clicon nacm user credential string <--> constants, 
  * see clixon-config.yang type nacm_cred_mode */
 static const map_str2int nacm_credentials_map[] = {
-    {"none",      NC_NONE}, 
-    {"exact",     NC_EXACT}, 
-    {"except",    NC_EXCEPT}, 
+    {"none",      NC_NONE},
+    {"exact",     NC_EXACT},
+    {"except",    NC_EXCEPT},
     {NULL,        -1}
-};
-
-/* Mapping between datastore cache string <--> constants, 
- * see clixon-config.yang type datastore_cache */
-static const map_str2int datastore_cache_map[] = {
-    {"nocache",               DATASTORE_NOCACHE},
-    {"cache",                 DATASTORE_CACHE},
-    {"cache-zerocopy",        DATASTORE_CACHE_ZEROCOPY},
-    {NULL,                    -1}
 };
 
 /* Mapping between regular expression type string <--> constants, 
@@ -128,15 +126,56 @@ static const map_str2int yang_regexp_map[] = {
     {NULL,                 -1}
 };
 
-/*! Print registry on file. For debugging.
- * @param[in] h        Clicon handle
+/*! Translate between int and string of tree formats
+ *
+ * @see enum format_enum
+ */
+static const map_str2int _FORMATS[] = {
+    {"xml",              FORMAT_XML},
+    {"text",             FORMAT_TEXT},
+    {"json",             FORMAT_JSON},
+    {"cli",              FORMAT_CLI},
+    {"netconf",          FORMAT_NETCONF},
+    {"default",          FORMAT_DEFAULT},
+    {"pipe-xml-default", FORMAT_PIPE_XML_DEFAULT},
+    {NULL,      -1}
+};
+
+/*! Translate from numeric format to string representation
+ *
+ * @param[in]  showas   Format value (see enum format_enum)
+ * @retval     str      String value
+ */
+char *
+format_int2str(enum format_enum showas)
+{
+    return (char*)clicon_int2str(_FORMATS, showas);
+}
+
+/*! Translate from string to numeric format representation
+ *
+ * @param[in]  str       String value
+ * @retval     enum      Format value (see enum format_enum)
+ */
+enum format_enum
+format_str2int(char *str)
+{
+    return clicon_str2int(_FORMATS, str);
+}
+
+/*! Debug dump config options
+ *
+ * @param[in] h        Clixon handle
  * @param[in] dbglevel Debug level
  * @retval    0        OK
  * @retval   -1        Error
  * @note CLICON_FEATURE, CLICON_YANG_DIR and CLICON_SNMP_MIB are treated specially since they are lists
+ * @note sub-config structs not shown: eg autocli/restconf
+ * @see clicon_option_dump1  different formats
+ * @see cli_show_options
  */
 int
-clicon_option_dump(clicon_handle h, 
+clicon_option_dump(clixon_handle h,
                    int           dbglevel)
 {
     int            retval = -1;
@@ -147,19 +186,19 @@ clicon_option_dump(clicon_handle h,
     size_t         klen;
     size_t         vlen;
     cxobj         *x = NULL;
-    
+
     if (clicon_hash_keys(hash, &keys, &klen) < 0)
         goto done;
     for(i = 0; i < klen; i++) {
         val = clicon_hash_value(hash, keys[i], &vlen);
         if (vlen){
             if (((char*)val)[vlen-1]=='\0') /* assume string */
-                clicon_debug(dbglevel, "%s =\t \"%s\"", keys[i], (char*)val);
+                clixon_debug(dbglevel, "%s =\t \"%s\"", keys[i], (char*)val);
             else
-                clicon_debug(dbglevel, "%s =\t 0x%p , length %zu", keys[i], val, vlen);
+                clixon_debug(dbglevel, "%s =\t 0x%p , length %zu", keys[i], val, vlen);
         }
         else
-            clicon_debug(dbglevel, "%s = NULL", keys[i]);
+            clixon_debug(dbglevel, "%s = NULL", keys[i]);
     }
     /* Next print CLICON_FEATURE, CLICON_YANG_DIR and CLICON_SNMP_DIR from config tree
      * Since they are lists they are placed in the config tree.
@@ -168,19 +207,19 @@ clicon_option_dump(clicon_handle h,
     while ((x = xml_child_each(clicon_conf_xml(h), x, CX_ELMNT)) != NULL) {
         if (strcmp(xml_name(x), "CLICON_YANG_DIR") != 0)
             continue;
-        clicon_debug(dbglevel, "%s =\t \"%s\"", xml_name(x), xml_body(x));
+        clixon_debug(dbglevel, "%s =\t \"%s\"", xml_name(x), xml_body(x));
     }
     x = NULL;
     while ((x = xml_child_each(clicon_conf_xml(h), x, CX_ELMNT)) != NULL) {
         if (strcmp(xml_name(x), "CLICON_FEATURE") != 0)
             continue;
-        clicon_debug(dbglevel, "%s =\t \"%s\"", xml_name(x), xml_body(x));
+        clixon_debug(dbglevel, "%s =\t \"%s\"", xml_name(x), xml_body(x));
     }
     x = NULL;
     while ((x = xml_child_each(clicon_conf_xml(h), x, CX_ELMNT)) != NULL) {
         if (strcmp(xml_name(x), "CLICON_SNMP_MIB") != 0)
             continue;
-        clicon_debug(dbglevel, "%s =\t \"%s\"", xml_name(x), xml_body(x));
+        clixon_debug(dbglevel, "%s =\t \"%s\"", xml_name(x), xml_body(x));
     }
    retval = 0;
  done:
@@ -189,45 +228,85 @@ clicon_option_dump(clicon_handle h,
     return retval;
 }
 
+/*! Dump config options on stdio using output format
+ *
+ * @param[in] h        Clixon handle
+ * @param[in] f        Output file
+ * @param[in] format   Dump output format
+ * @param[in] pretty   Set if pretty-print xml and json
+ * @retval    0        OK
+ * @retval   -1        Error
+ * @see clicon_option_dump  for debug log
+ */
+int
+clicon_option_dump1(clixon_handle h,
+                    FILE         *f,
+                    int           format,
+                    int           pretty)
+{
+    int    retval = -1;
+    cxobj *xc;
+
+    xc = clicon_conf_xml(h);
+    switch (format){
+    case FORMAT_XML:
+        if (clixon_xml2file(f, xc, 0, pretty, "", cligen_output, 0, 0) < 0)
+            goto done;
+        break;
+    case FORMAT_JSON:
+        if (clixon_json2file(f, xc, pretty, cligen_output, 0, 0, 0) < 0)
+            goto done;
+        break;
+    case FORMAT_TEXT:
+        if (clixon_text2file(f, xc, 0, cligen_output, 0, 0) < 0)
+            goto done;
+        break;
+    default:
+        clixon_err(OE_XML, EINVAL, "%s not supported", format_int2str(format));
+        goto done;
+        break;
+    }
+    retval = 0;
+ done:
+    return retval;
+}
+
 /*! Open and parse single config file
- * @param[in]  filename
+ *
+ * @param[in]  h        Clixon handle
+ * @param[in]  filename 
  * @param[in]  yspec
- * @param[out] xconfig   Pointer to xml config tree. Should be freed by caller
+ * @param[out] xconfig  Pointer to xml config tree. Should be freed by caller
+ * @retval     0        OK
+ * @retval    -1        Error
  */
 static int
-parse_configfile_one(const char *filename,
-                     yang_stmt  *yspec,
-                     cxobj     **xconfig)
+parse_configfile_one(clixon_handle h,
+                     const char   *filename,
+                     yang_stmt    *yspec,
+                     cxobj       **xconfig)
 {
     int    retval = -1;
     FILE  *fp = NULL;
     cxobj *xt = NULL;
     cxobj *xerr = NULL;
     cxobj *xa;
-    cbuf  *cbret = NULL;
     int    ret;
 
     if ((fp = fopen(filename, "r")) == NULL){
-        clicon_err(OE_UNIX, errno, "open configure file: %s", filename);
+        clixon_err(OE_UNIX, errno, "open configure file: %s", filename);
         return -1;
     }
-    clicon_debug(CLIXON_DBG_DETAIL, "%s: Reading config file %s", __FUNCTION__, filename);
+    clixon_debug(CLIXON_DBG_INIT, "Reading config file %s", filename);
     if ((ret = clixon_xml_parse_file(fp, yspec?YB_MODULE:YB_NONE, yspec, &xt, &xerr)) < 0)
         goto done;
     if (ret == 0){
-        if ((cbret = cbuf_new()) ==NULL){
-            clicon_err(OE_XML, errno, "cbuf_new");
-            goto done;
-        }
-        if (netconf_err2cb(xerr, cbret) < 0)
-            goto done;
-        /* Here one could make it more relaxing to not quit on unrecognized option? */
-        clixon_netconf_error(xerr, NULL, NULL);
+        clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Config file: %s", filename);
         goto done;
     }
     /* Ensure a single root */
     if (xt == NULL || xml_child_nr(xt) != 1){
-        clicon_err(OE_CFG, 0, "Config file %s: Lacks single top element", filename);
+        clixon_err(OE_CFG, 0, "Config file %s: Lacks single top element", filename);
         goto done;
     }
     if (xml_rootchild(xt, 0, &xt) < 0)
@@ -236,21 +315,97 @@ parse_configfile_one(const char *filename,
     if (strcmp(xml_name(xt), "clixon-config") != 0 ||
         (xa = xml_find_type(xt, NULL, "xmlns", CX_ATTR)) == NULL ||
         strcmp(xml_value(xa), CLIXON_CONF_NS) != 0){
-        clicon_err(OE_CFG, 0, "Config file %s: Lacks top-level \"clixon-config\" element\nClixon config files should begin with: <clixon-config xmlns=\"%s\">", filename, CLIXON_CONF_NS);
+        clixon_err(OE_CFG, 0, "Config file %s: Lacks top-level \"clixon-config\" element\nClixon config files should begin with: <clixon-config xmlns=\"%s\">", filename, CLIXON_CONF_NS);
         goto done;
     }
     *xconfig = xt;
     xt = NULL;
     retval = 0;
  done:
+    clixon_debug(CLIXON_DBG_INIT | CLIXON_DBG_DETAIL, "Done w/ config file %s retval:%d", filename, retval);
     if (xt)
         xml_free(xt);
     if (fp)
         fclose(fp);
-    if (cbret)
-        cbuf_free(cbret);
     if (xerr)
         xml_free(xerr);
+    return retval;
+}
+
+/*! Merge XML sub config file into main config-file
+ *
+ * @param[in]  h   Clixon handle
+ * @param[in]  xt  Existing target XML 
+ * @param[in]  xe  Source XML (merge this to xt)
+ * @retval     0   OK
+ * @retval    -1   Error
+ */
+static int
+merge_control_xml(clixon_handle h,
+                  cxobj        *xt,
+                  cxobj        *xe)
+{
+    int    retval = -1;
+    char  *name;
+    char  *body;
+    cxobj *xec;
+    cxobj *xtc;
+    cxobj *x;
+    //    int    ret;
+
+    /* One could have used xml_merge, but there are several special conditions */
+    xec = NULL;
+    while ((xec = xml_child_each(xe, xec, CX_ELMNT)) != NULL){
+        if ((name = xml_name(xec)) == NULL)
+            continue;
+        if ((body = xml_body(xec)) == NULL){
+            if ((xtc = xml_find_type(xt, NULL, name, CX_ELMNT)) != NULL){
+                if (xml_rm_children(xtc, -1) < 0)
+                    goto done;
+                if (xml_copy(xec, xtc) < 0)
+                    goto done;
+            }
+            else{
+                /* Copy and add to master */
+                if ((x = xml_dup(xec)) == NULL)
+                    goto done;
+                if (xml_addsub(xt, x) < 0)
+                    goto done;
+            }
+            continue;
+        }
+        /* Ignored from file due to bootstrapping */
+        if (strcmp(name,"CLICON_CONFIGFILE")==0) {
+            continue;
+        }
+        /* List options for configure options that are lists or leaf-lists: append to main */
+        if (strcmp(name,"CLICON_FEATURE") == 0 ||
+            strcmp(name,"CLICON_YANG_DIR") == 0 ||
+            strcmp(name,"CLICON_SNMP_MIB") == 0){
+            if ((x = xml_dup(xec)) == NULL)
+                goto done;
+            if (xml_addsub(xt, x) < 0)
+                goto done;
+            continue;
+        }
+        /* Replace existing  */
+        xtc = xml_find_type(xt, NULL, name, CX_ELMNT);
+        if (xtc != NULL){
+            if (xml_rm_children(xtc, -1) < 0)
+                goto done;
+            if (xml_copy(xec, xtc) < 0)
+                goto done;
+        }
+        else {
+            /* Copy and add to master */
+            if ((x = xml_dup(xec)) == NULL)
+                goto done;
+            if (xml_addsub(xt, x) < 0)
+                goto done;
+        }
+    }
+    retval = 0;
+ done:
     return retval;
 }
 
@@ -265,9 +420,9 @@ parse_configfile_one(const char *filename,
  * @retval    -1            Error
  */
 static int
-parse_configfile(clicon_handle  h,
+parse_configfile(clixon_handle  h,
                  const char    *filename,
-                 char          *extraconfdir0, 
+                 char          *extraconfdir0,
                  yang_stmt     *yspec,
                  cxobj        **xconfig)
 {
@@ -276,6 +431,7 @@ parse_configfile(clicon_handle  h,
     cxobj         *xt = NULL;
     cxobj         *xc = NULL;
     cxobj         *x = NULL;
+    yang_stmt     *y;
     char          *name;
     char          *body;
     clicon_hash_t *copt = clicon_options(h);
@@ -289,23 +445,23 @@ parse_configfile(clicon_handle  h,
     char           filename1[MAXPATHLEN];
     char          *extraconfdir = NULL;
     cxobj         *xe = NULL;
-    cxobj         *xec;
     DIR           *dirp;
 
     if (filename == NULL || !strlen(filename)){
-        clicon_err(OE_UNIX, 0, "Not specified");
+        clixon_err(OE_UNIX, 0, "Not specified");
         goto done;
     }
     if (stat(filename, &st) < 0){
-        clicon_err(OE_UNIX, errno, "%s", filename);
+        clixon_err(OE_UNIX, errno, "%s", filename);
         goto done;
     }
     if (!S_ISREG(st.st_mode)){
-        clicon_err(OE_UNIX, 0, "%s is not a regular file", filename);
+        clixon_err(OE_UNIX, 0, "%s is not a regular file", filename);
         goto done;
     }
+    clixon_debug(CLIXON_DBG_INIT, "Reading config file %s", filename);
     /* Parse main config file */
-    if (parse_configfile_one(filename, yspec, &xt) < 0)
+    if (parse_configfile_one(h, filename, yspec, &xt) < 0)
         goto done;
     /* xt is a single-rooted:  <clixon-config>...</clixon-config>
      * If no override (eg from command-line)
@@ -316,61 +472,51 @@ parse_configfile(clicon_handle  h,
     if (extraconfdir){ /* If extra dir, parse extra config files */
         /* A check it exists (also done in clicon_file_dirent) */
         if ((dirp = opendir(extraconfdir)) == NULL) {
-            clicon_err(OE_UNIX, errno, "CLICON_CONFIGDIR: %s opendir", extraconfdir);
+            clixon_err(OE_UNIX, errno, "CLICON_CONFIGDIR: %s opendir", extraconfdir);
             goto done;
         }
         closedir(dirp);
-        if((ndp = clicon_file_dirent(extraconfdir, &dp, NULL, S_IFREG)) < 0)  /* Read dir */
+        if((ndp = clicon_file_dirent(extraconfdir, &dp, "\\.xml$", S_IFREG)) < 0)  /* Read dir */
             goto done;
         /* Loop through files */
-        for (i = 0; i < ndp; i++){      
+        for (i = 0; i < ndp; i++){
             snprintf(filename1, sizeof(filename1), "%s/%s", extraconfdir, dp[i].d_name);
-            if (parse_configfile_one(filename1, yspec, &xe) < 0)
+            if (parse_configfile_one(h, filename1, yspec, &xe) < 0)
                 goto done;
-            /* Drain objects from extrafile and replace/append to main */
-            while ((xec = xml_child_i_type(xe, 0, CX_ELMNT)) != NULL) {
-                name = xml_name(xec);
-                body = xml_body(xec);
-                /* Ignore non-leafs */
-                if (name == NULL || body == NULL)
-                    continue;
-                /* Ignored from file due to bootstrapping */
-                if (strcmp(name,"CLICON_CONFIGFILE")==0)
-                    continue;
-                /* List options for configure options that are lists or leaf-lists: append to main */
-                if (strcmp(name,"CLICON_FEATURE")==0 ||
-                    strcmp(name,"CLICON_YANG_DIR")==0 ||
-                    strcmp(name,"CLICON_SNMP_MIB")==0){
-                    if (xml_addsub(xt, xec) < 0)
-                        goto done;
-                    continue;
-                }
-                /* Remove existing in master if any */
-                if ((x = xml_find_type(xt, NULL, name, CX_ELMNT)) != NULL)
-                    xml_purge(x);
-                /* Append to master (removed from xe) */
-                if (xml_addsub(xt, xec) < 0)
-                    goto done;
-            }
+            /* Merge objects from extrafile into main, xml_merge cannot be used due to special cases */
+            if (merge_control_xml(h, xt, xe) < 0)
+                goto done;
             if (xe)
                 xml_free(xe);
             xe = NULL;
         }
     }
-    if (xml_default_recurse(xt, 0) < 0)
-        goto done;      
+    /* Check obsolete options before default expansion */
+    x = NULL;
+    while ((x = xml_child_each(xt, x, CX_ELMNT)) != NULL) {
+        if ((y = xml_spec(x)) != NULL){
+            if ((yang_find(y, Y_STATUS, "obsolete")) != NULL){
+                clixon_err(OE_CFG, 0, "Clixon option %s is obsolete but given in the config file which is considered an error",
+                           xml_name(x));
+                goto done;
+            }
+        }
+    }
+    if (xml_default_recurse(xt, 0, 0) < 0)
+        goto done;
     if ((ret = xml_yang_validate_add(h, xt, &xerr)) < 0)
         goto done;
     if (ret == 0){
         if ((cbret = cbuf_new()) ==NULL){
-            clicon_err(OE_XML, errno, "cbuf_new");
+            clixon_err(OE_XML, errno, "cbuf_new");
             goto done;
         }
-        if (netconf_err2cb(xerr, cbret) < 0)
-            goto done;
-        clicon_err(OE_CFG, 0, "Config file validation: %s", cbuf_get(cbret));
+        clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Config file validation");
         goto done;
     }
+    /* Add top-level hash options.
+     * Hashed options are historical and could be replaced with xml, see eg clicon_option_str
+     */
     x = NULL;
     while ((x = xml_child_each(xt, x, CX_ELMNT)) != NULL) {
         name = xml_name(x);
@@ -390,16 +536,18 @@ parse_configfile(clicon_handle  h,
             continue;
         if (strcmp(name,"CLICON_SNMP_MIB")==0)
             continue;
-        if (clicon_hash_add(copt, 
+        if (clicon_hash_add(copt,
                             name,
                             body,
                             strlen(body)+1) == NULL)
             goto done;
     }
+    xml_sort_recurse(xt);
     retval = 0;
     *xconfig = xt;
     xt = NULL;
  done:
+    clixon_debug(CLIXON_DBG_INIT | CLIXON_DBG_DETAIL, "Done w/ config file %s retval:%d", filename, retval);
     if (dp)
         free(dp);
     if (nsc)
@@ -414,9 +562,10 @@ parse_configfile(clicon_handle  h,
 }
 
 /*! Add configuration option overriding file setting
+ *
  * Add to clicon_options hash, and to clicon_conf_xml tree
  * Assumes clicon_conf_xml_set has been called
- * @param[in]  h      Clicon handle
+ * @param[in]  h      Clixon handle
  * @param[in]  name   Name of configuration option (see clixon-config.yang)
  * @param[in]  value  String value
  * @retval     0      OK
@@ -424,30 +573,41 @@ parse_configfile(clicon_handle  h,
  * @see clicon_options_main  For loading options from file
  */
 int
-clicon_option_add(clicon_handle h,
+clicon_option_add(clixon_handle h,
                   const char   *name,
                   char         *value)
 {
     int            retval = -1;
     clicon_hash_t *copt = clicon_options(h);
-    cxobj         *x;
+    cxobj         *xconfig;
+    cxobj         *xopt;
 
+    if ((xconfig = clicon_conf_xml(h)) == NULL){
+        clixon_err(OE_UNIX, ENOENT, "option %s not found (clicon_conf_xml_set has not been called?)", name);
+        goto done;
+    }
     if (strcmp(name, "CLICON_FEATURE")==0 ||
         strcmp(name, "CLICON_YANG_DIR")==0 ||
         strcmp(name, "CLICON_SNMP_MIB")==0){
-        if ((x = clicon_conf_xml(h)) == NULL){
-            clicon_err(OE_UNIX, ENOENT, "option %s not found (clicon_conf_xml_set has not been called?)", name);
-            goto done;
-        }
-        if (clixon_xml_parse_va(YB_NONE, NULL, &x, NULL, "<%s>%s</%s>",
+        if (clixon_xml_parse_va(YB_NONE, NULL, &xconfig, NULL, "<%s>%s</%s>",
                                 name, value, name) < 0)
             goto done;
     }
-    if (clicon_hash_add(copt, 
-                 name,
-                 value,
-                 strlen(value)+1) == NULL)
-        goto done;
+    else{
+        /* Add/change hash */
+        if (clicon_hash_add(copt,
+                            name,
+                            value,
+                            strlen(value)+1) == NULL)
+            goto done;
+        /* Add/change in clicon_conf_xml */
+        if ((xopt = xpath_first(xconfig, 0, "%s", name)) != NULL)
+            xml_purge(xopt);
+        if (clixon_xml_parse_va(YB_NONE, NULL, &xconfig, NULL, "<%s>%s</%s>",
+                                name, value, name) < 0)
+            goto done;
+    }
+    xml_sort(xconfig);
     retval = 0;
  done:
     return retval;
@@ -458,14 +618,16 @@ clicon_option_add(clicon_handle h,
  * Set default options, Read config-file, Check that all values are set.
  * Parse clixon yang file and save in yspec.
  * Read clixon system config files
- * @param[in]  h     clicon handle
- * @param[in]  yspec Yang spec of clixon config file
+ * @param[in]  h      clicon handle
+ * @param[in]  yspec  Yang spec of clixon config file
+ * @retval     0      OK
+ * @retval    -1      Error
  * @note Due to Bug: Top-level Yang symbol cannot be called "config" in any 
  *       imported yang file, the config module needs to be isolated from all 
  *       other yang modules.
  */
 int
-clicon_options_main(clicon_handle h)
+clicon_options_main(clixon_handle h)
 {
     int            retval = -1;
     char          *configfile;
@@ -475,34 +637,34 @@ clicon_options_main(clicon_handle h)
     cxobj         *xconfig = NULL;
     yang_stmt     *yspec = NULL;
     char          *extraconfdir = NULL;
+    char          *yangspec = "clixon-config";
 
     /* Create configure yang-spec */
-    if ((yspec = yspec_new()) == NULL)
+    if ((yspec = yspec_new1(h, YANG_DOMAIN_TOP, YANG_CONFIG_TOP)) == NULL)
         goto done;
     /*
      * Set configure file if not set by command-line above
      */
-    if (!clicon_hash_lookup(copt, "CLICON_CONFIGFILE")){ 
+    if (!clicon_hash_lookup(copt, "CLICON_CONFIGFILE")){
         clicon_option_str_set(h, "CLICON_CONFIGFILE", CLIXON_DEFAULT_CONFIG);
     }
     configfile = clicon_hash_value(copt, "CLICON_CONFIGFILE", NULL);
     if (strlen(configfile) == 0)
         configfile = clicon_hash_value(copt, "CLICON_CONFIGFILE", NULL);
-    clicon_debug(1, "CLICON_CONFIGFILE=%s", configfile);
+    clixon_debug(CLIXON_DBG_INIT, "CLICON_CONFIGFILE=%s", configfile);
     /* File must end with .xml */
     if ((suffix = rindex(configfile, '.')) != NULL){
         suffix++;
         xml = strcmp(suffix, "xml") == 0;
     }
     if (xml == 0){
-        clicon_err(OE_CFG, 0, "%s: suffix %s not recognized", configfile, suffix);
+        clixon_err(OE_CFG, 0, "%s: suffix %s not recognized", configfile, suffix);
         goto done;
     }
-    
     /* Override extraconfdir */
     if (clicon_option_str(h, "CLICON_CONFIGDIR") &&
         (extraconfdir = strdup(clicon_option_str(h, "CLICON_CONFIGDIR"))) == NULL){
-        clicon_err(OE_UNIX, errno, "strdup");
+        clixon_err(OE_UNIX, errno, "strdup");
         goto done;
     }
 
@@ -516,7 +678,6 @@ clicon_options_main(clicon_handle h)
      */
     if (parse_configfile(h, configfile, extraconfdir, NULL, &xconfig) < 0)
         goto done;
-    
     clicon_conf_xml_set(h, xconfig);
 
 #ifdef WITH_RESTCONF_FCGI
@@ -532,10 +693,9 @@ clicon_options_main(clicon_handle h)
         goto done;
 #endif
     /* Parse clixon yang spec */
-    if (yang_spec_parse_module(h, "clixon-config", NULL, yspec) < 0)
-        goto done;    
-    /* Load restconf yang. Note this is also a part of clixon-config */
-    if (yang_spec_parse_module(h, "clixon-restconf", NULL, yspec)< 0)
+    if (clicon_option_str(h, "CLICON_CONFIG_EXTEND") != NULL)
+        yangspec = clicon_option_str(h, "CLICON_CONFIG_EXTEND");
+    if (yang_spec_parse_module(h, yangspec, NULL, yspec) < 0)
         goto done;
     clicon_conf_xml_set(h, NULL);
     if (xconfig){
@@ -546,34 +706,83 @@ clicon_options_main(clicon_handle h)
     if (parse_configfile(h, configfile, extraconfdir, yspec, &xconfig) < 0)
         goto done;
     if (xml_spec(xconfig) == NULL){
-        clicon_err(OE_CFG, 0, "Config file %s: did not find corresponding Yang specification\nHint: File does not begin with: <clixon-config xmlns=\"%s\"> or clixon-config.yang not found?", configfile, CLIXON_CONF_NS);
+        clixon_err(OE_CFG, 0, "Config file %s: did not find corresponding Yang specification\nHint: File does not begin with: <clixon-config xmlns=\"%s\"> or clixon-config.yang not found?", configfile, CLIXON_CONF_NS);
         goto done;
     }
-    /* Set yang config spec (must store to free at exit, since conf_xml below uses it) */
-    if (clicon_config_yang_set(h, yspec) < 0)
-       goto done;
     yspec = NULL;
     /* Set clixon_conf pointer to handle */
+    xml_sort(xconfig);
     if (clicon_conf_xml_set(h, xconfig) < 0)
         goto done;
-
     retval = 0;
  done:
-    if (yspec)
-        ys_free(yspec);
     if (extraconfdir)
         free(extraconfdir);
     return retval;
 }
 
+/*! Options debug and log helper function
+ *
+ * If no debug or log option set in command-line, read debug or log options from
+ * configure file.
+ * Also set log file if CLICON_LOG_FILE is set
+ * @param[in]  h       Clixon handle
+ * @param[in]  dbg     Debug bitmask
+ * @param[in]  logdst  Log destination bitmask
+ * @param[in]  ident   prefix that appears on syslog
+ * @retval     0       OK
+ * @retval    -1       Error
+ */
+int
+clixon_options_main_helper(clixon_handle h,
+                           uint32_t      dbg,
+                           uint32_t      logdst,
+                           char         *ident)
+{
+    int   retval = -1;
+    int   relog = 0;
+    char *dstr;
+
+    relog = 0;
+    dstr = clicon_option_str(h, "CLICON_DEBUG");
+    if (dbg == 0 && dstr && strlen(dstr)){
+        if (yang_bits_map(clicon_config_yang(h),
+                          dstr,
+                          "/cc:clixon-config/cc:CLICON_DEBUG",
+                          &dbg) < 0)
+            goto done;
+        relog++;
+    }
+    dstr = clicon_option_str(h, "CLICON_LOG_DESTINATION");
+    if (logdst == 0 && dstr && strlen(dstr)){
+        logdst = 0;
+        if (yang_bits_map(clicon_config_yang(h),
+                          dstr,
+                          "/cc:clixon-config/cc:CLICON_LOG_DESTINATION",
+                          &logdst) < 0)
+            goto done;
+        relog++;
+    }
+    if (relog){
+        clixon_debug_init(h, dbg);
+        clixon_log_init(h, ident, dbg?LOG_DEBUG:LOG_INFO, logdst?logdst:CLIXON_LOG_STDERR);
+    }
+    if ((dstr = clicon_option_str(h, "CLICON_LOG_FILE")) != NULL)
+        clixon_log_file(dstr);
+    retval = 0;
+ done:
+    return retval;
+}
+
 /*! Check if a clicon option has a value
- * @param[in] h     clicon_handle
+ *
+ * @param[in] h     clixon_handle
  * @param[in] name  option name
  * @retval  !=0     option exists
  * @retval    0     option does not exist
  */
 int
-clicon_option_exists(clicon_handle h,
+clicon_option_exists(clixon_handle h,
                      const char   *name)
 {
     clicon_hash_t *copt = clicon_options(h);
@@ -583,16 +792,16 @@ clicon_option_exists(clicon_handle h,
 
 /*! Get a single string option string via handle
  *
- * @param[in] h       clicon_handle
+ * @param[in] h       clixon_handle
  * @param[in] name    option name
- * @retval    NULL    If option not found, or value of option is NULL
  * @retval    string  value of option if found
+ * @retval    NULL    If option not found, or value of option is NULL
  * clicon options should be strings.
  * @note To differentiate the two reasons why NULL may be returned, use function 
  * clicon_option_exists() before the call
  */
 char *
-clicon_option_str(clicon_handle h, 
+clicon_option_str(clixon_handle h,
                   const char   *name)
 {
     clicon_hash_t *copt = clicon_options(h);
@@ -603,15 +812,16 @@ clicon_option_str(clicon_handle h,
 }
 
 /*! Set a single string option via handle 
- * @param[in] h       clicon_handle
+ *
+ * @param[in] h       clixon_handle
  * @param[in] name    option name
  * @param[in] val     option value, must be null-terminated string
  * @retval    0       OK
  * @retval   -1       Error
  */
 int
-clicon_option_str_set(clicon_handle h, 
-                      const char   *name, 
+clicon_option_str_set(clixon_handle h,
+                      const char   *name,
                       char         *val)
 {
     clicon_hash_t *copt = clicon_options(h);
@@ -624,7 +834,7 @@ clicon_option_str_set(clicon_handle h,
  * @param[in] h    clicon handle
  * @param[in] name name of option
  * @retval    int  An integer as a result of atoi
- * @retval    -1   If option does not exist
+ * @retval   -1    If option does not exist
  * @code
  *  if (clicon_option_exists(h, "X"))
  *      return clicon_option_int(h, "X");
@@ -634,9 +844,10 @@ clicon_option_str_set(clicon_handle h,
  * Note that -1 can be both error and value.
  * This means that it should be used together with clicon_option_exists() and
  * supply a default value as shown in the example.
+ * @see clicon_data_int_get  for transient values (not clixon config file)
  */
 int
-clicon_option_int(clicon_handle h,
+clicon_option_int(clixon_handle h,
                   const char   *name)
 {
     char *s;
@@ -647,17 +858,18 @@ clicon_option_int(clicon_handle h,
 }
 
 /*! Set option given as int.
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @param[in] name  Name of option to set
  * @param[in] val   Integer value
  */
 int
-clicon_option_int_set(clicon_handle h,
+clicon_option_int_set(clixon_handle h,
                       const char   *name,
                       int           val)
 {
     char s[64];
-    
+
     if (snprintf(s, sizeof(s)-1, "%u", val) < 0)
         return -1;
     return clicon_option_str_set(h, name, s);
@@ -665,10 +877,10 @@ clicon_option_int_set(clicon_handle h,
 
 /*! Get options as bool but stored as string
  *
- * @param[in] h    Clicon handle
+ * @param[in] h    Clixon handle
  * @param[in] name name of option
- * @retval    0    false, or does not exist, or does not have a boolean value
  * @retval    1    true
+ * @retval    0    false, or does not exist, or does not have a boolean value
  * @code
  *  if (clicon_option_exists(h, "X")
  *      return clicon_option_bool(h, "X");
@@ -680,7 +892,7 @@ clicon_option_int_set(clicon_handle h,
  * supply a default value as shown in the example.
  */
 int
-clicon_option_bool(clicon_handle h,
+clicon_option_bool(clixon_handle h,
                    const char   *name)
 {
     char *s;
@@ -695,34 +907,36 @@ clicon_option_bool(clicon_handle h,
 }
 
 /*! Set option given as bool
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @param[in] name  Name of option to set
  * @param[in] val   Boolean value, 0 or 1
  */
 int
-clicon_option_bool_set(clicon_handle h,
+clicon_option_bool_set(clixon_handle h,
                       const char   *name,
                       int           val)
 {
     char s[64];
-    
+
     if (val != 0 && val != 1){
-        clicon_err(OE_CFG, EINVAL, "val is %d, 0 or 1 expected", val);
+        clixon_err(OE_CFG, EINVAL, "val is %d, 0 or 1 expected", val);
         return -1;
     }
     if (snprintf(s, sizeof(s)-1, "%s", val?"true":"false") < 0){
-        clicon_err(OE_CFG, errno, "snprintf");
+        clixon_err(OE_CFG, errno, "snprintf");
         return -1;
     }
     return clicon_option_str_set(h, name, s);
 }
 
 /*! Delete option 
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @param[in] name  Name of option to delete
  */
 int
-clicon_option_del(clicon_handle h,
+clicon_option_del(clixon_handle h,
                   const char   *name)
 {
     clicon_hash_t *copt = clicon_options(h);
@@ -742,12 +956,13 @@ clicon_option_del(clicon_handle h,
  *-----------------------------------------------------------------*/
 
 /*! Get "do not include keys in cvec" in cli vars callbacks
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @retval    flag  If set, get only vars
  * @see clixon-config@<date>.yang CLICON_CLI_VARONLY
  */
 int
-clicon_cli_varonly(clicon_handle h)
+clicon_cli_varonly(clixon_handle h)
 {
     char const *opt = "CLICON_CLI_VARONLY";
 
@@ -758,12 +973,13 @@ clicon_cli_varonly(clicon_handle h)
 }
 
 /*! Get family of backend socket: AF_UNIX, AF_INET or AF_INET6 
+ *
  * @see clixon-config@<date>.yang CLICON_SOCK_FAMILY
- * @param[in] h     Clicon handle
+ * @param[in] h     Clixon handle
  * @retval    fam   Socket family
  */
 int
-clicon_sock_family(clicon_handle h)
+clicon_sock_family(clixon_handle h)
 {
     char *s;
 
@@ -780,12 +996,13 @@ clicon_sock_family(clicon_handle h)
 }
 
 /*! Get port for backend socket in case of AF_INET or AF_INET6 
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @retval    port  Socket port
  * @see clixon-config@<date>.yang CLICON_SOCK_PORT
  */
 int
-clicon_sock_port(clicon_handle h)
+clicon_sock_port(clixon_handle h)
 {
     char *s;
 
@@ -795,11 +1012,12 @@ clicon_sock_port(clicon_handle h)
 }
 
 /*! Set if all configuration changes are committed automatically 
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @retval    flag  Autocommit (or not)
  */
 int
-clicon_autocommit(clicon_handle h)
+clicon_autocommit(clixon_handle h)
 {
     char const *opt = "CLICON_AUTOCOMMIT";
 
@@ -810,11 +1028,12 @@ clicon_autocommit(clicon_handle h)
 }
 
 /*! Which method to boot/start clicon backend
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @retval    mode  Startup mode
  */
 int
-clicon_startup_mode(clicon_handle h)
+clicon_startup_mode(clixon_handle h)
 {
     char *mode;
 
@@ -824,11 +1043,12 @@ clicon_startup_mode(clicon_handle h)
 }
 
 /*! Which privileges drop method to use for backend
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @retval    mode  Privileges mode
  */
 enum priv_mode_t
-clicon_backend_privileges_mode(clicon_handle h)
+clicon_backend_privileges_mode(clixon_handle h)
 {
     char *mode;
 
@@ -838,11 +1058,12 @@ clicon_backend_privileges_mode(clicon_handle h)
 }
 
 /*! Which privileges drop method to use for restconf
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @retval    mode  Privileges mode
  */
 enum priv_mode_t
-clicon_restconf_privileges_mode(clicon_handle h)
+clicon_restconf_privileges_mode(clixon_handle h)
 {
     char *mode;
 
@@ -852,11 +1073,12 @@ clicon_restconf_privileges_mode(clicon_handle h)
 }
 
 /*! Which privileges drop method to use
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @retval    mode  Privileges mode
  */
 enum nacm_credentials_t
-clicon_nacm_credentials(clicon_handle h)
+clicon_nacm_credentials(clixon_handle h)
 {
     char *mode;
 
@@ -865,29 +1087,14 @@ clicon_nacm_credentials(clicon_handle h)
     return clicon_str2int(nacm_credentials_map, mode);
 }
 
-/*! Which datastore cache method to use
- * @param[in] h      Clicon handle
- * @retval    method Datastore cache method
- * @see clixon-config@<date>.yang CLICON_DATASTORE_CACHE
- */
-enum datastore_cache
-clicon_datastore_cache(clicon_handle h)
-{
-    char *str;
-
-    if ((str = clicon_option_str(h, "CLICON_DATASTORE_CACHE")) == NULL)
-        return DATASTORE_CACHE;
-    else
-        return clicon_str2int(datastore_cache_map, str);
-}
-
 /*! Which Yang regexp/pattern engine to use
- * @param[in] h     Clicon handle
+ *
+ * @param[in] h     Clixon handle
  * @retval    mode  Regexp engine to use
  * @see clixon-config@<date>.yang CLICON_YANG_REGEXP
  */
 enum regexp_mode
-clicon_yang_regexp(clicon_handle h)
+clicon_yang_regexp(clixon_handle h)
 {
     char *str;
 
@@ -904,11 +1111,12 @@ clicon_yang_regexp(clicon_handle h)
  *--------------------------------------------------------------------*/
 
 /*! Get quiet mode eg -q option, do not print notifications on stdout 
- * @param[in] h      Clicon handle
+ *
+ * @param[in] h      Clixon handle
  * @retval    flag   quiet mode on or off
  */
 int
-clicon_quiet_mode(clicon_handle h)
+clicon_quiet_mode(clixon_handle h)
 {
     char *s;
     if ((s = clicon_option_str(h, "CLICON_QUIET")) == NULL)
@@ -917,13 +1125,13 @@ clicon_quiet_mode(clicon_handle h)
 }
 
 /*! Set quiet mode
- * @param[in] h      Clicon handle
+ *
+ * @param[in] h      Clixon handle
  * @param[in] val    Flag value
  */
 int
-clicon_quiet_mode_set(clicon_handle h,
+clicon_quiet_mode_set(clixon_handle h,
                       int           val)
 {
     return clicon_option_int_set(h, "CLICON_QUIET", val);
 }
-

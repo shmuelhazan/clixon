@@ -30,6 +30,9 @@
 
 >&2 echo "Running $testfile"
 
+# Save stty
+STTYSETTINGS=$(stty -g)
+
 # Generated config file from autotools / configure
 if [ -f ./config.sh ]; then
     . ./config.sh
@@ -183,13 +186,15 @@ BUSER=clicon
 
 : ${clixon_cli:=clixon_cli}
 
-: ${clixon_netconf:=$(which clixon_netconf)}
+: ${clixon_netconf:=clixon_netconf}
 
 : ${clixon_restconf:=clixon_restconf}
 
 : ${clixon_backend:=clixon_backend}
 
-: ${clixon_snmp:=$(type -p clixon_snmp)}
+: ${clixon_util_socket:=clixon_util_socket}
+
+: ${clixon_snmp:=clixon_snmp}
 
 : ${clixon_snmp_pidfile:="/var/tmp/clixon_snmp.pid"}
 
@@ -211,7 +216,7 @@ if [ -f ./site.sh ]; then
 fi
 
 # Standard IETF RFC yang files. 
-if [ ! -z ${YANG_STANDARD_DIR} ]; then
+if [ -n "${YANG_STANDARD_DIR}" ]; then
     : ${IETFRFC=$YANG_STANDARD_DIR/ietf/RFC}
 fi
 
@@ -224,12 +229,19 @@ if $SNMPCHECK; then
     snmpgetstr="$(type -p snmpget) -c public -v2c localhost "
     snmpgetnext="$(type -p snmpgetnext) -On -c public -v2c localhost "
     snmpgetnextstr="$(type -p snmpgetnext) -c public -v2c localhost "
-    snmptable="$(type -p snmptable) -c public -v2c localhost "
-    snmpwalk="$(type -p snmpwalk) -c public -v2c localhost "
+    if [ $valgrindtest -ne 0 ]; then 
+        # To avoid "Timeout: No Response from localhost" from netsnmp/snmpd set timeout to 10s
+        snmptable="$(type -p snmptable) -c public -t 10 -v2c localhost "
+        snmpwalk="$(type -p snmpwalk) -c public -t 10 -v2c localhost "
+    else
+        snmptable="$(type -p snmptable) -c public -v2c localhost "
+        snmpwalk="$(type -p snmpwalk) -c public -v2c localhost "
+    fi
+    snmpwalkstr="$(type -p snmpwalk) -c public -v2c localhost "
     snmptranslate="$(type -p snmptranslate) "
 
     if [ "${ENABLE_NETSNMP}" == "yes" ]; then
-            pgrep snmpd > /dev/null
+        pgrep snmpd > /dev/null
         if [ $? != 0 ]; then
                     echo -e "\e[31m\nenable-netsnmp set but snmpd not running, start with:"
                     echo "systemctl start snmpd"
@@ -239,7 +251,7 @@ if $SNMPCHECK; then
             echo "added to /etc/snmp/snmpd.conf:"
             echo ""
             echo "  rwcommunity     public  localhost"
-            echo "  agentXSocket    unix:/var/run/snmp.sock"
+            echo "  agentxsocket    unix:/var/run/snmp.sock"
             echo "  agentxperms     777 777"
             echo ""
             echo "If you don't rely on systemd you can configure the lines above"
@@ -405,8 +417,7 @@ EOF
 # to reset to me
 if [ ! -G $dir ]; then 
     u=$(whoami)
-    sudo chown $u $dir
-    sudo chgrp $u $dir
+    sudo chown $u:$u $dir
 fi
 
 # If you bring your own backend BE=0 (it is already started), the backend may
@@ -425,6 +436,7 @@ fi
 function err(){
   expect=$1
   ret=$2
+  stty $STTYSETTINGS >/dev/null
   echo -e "\e[31m\nError in Test$testnr [$testname]:"
   if [ $# -gt 0 ]; then 
       echo "Expected"
@@ -441,8 +453,9 @@ function err(){
   exit -1 #$testnr
 }
 
-# Dont print diffs
+# Don't print diffs
 function err1(){
+  stty $STTYSETTINGS >/dev/null
   echo -e "\e[31m\nError in Test$testnr [$testname]:"
   if [ $# -gt 0 ]; then 
       echo "Expected: $1"
@@ -487,7 +500,7 @@ function chunked_equal()
     fi
 }
 
-# Given a string, add RFC6242 chunked franing around it
+# Given a string, add RFC6242 chunked framing around it
 # Args:
 # 0: string
 function chunked_framing()
@@ -503,7 +516,8 @@ function start_snmp(){
     cfg=$1
 
     rm -f ${clixon_snmp_pidfile}
-    
+
+    export MIBDIRS
     $clixon_snmp -f $cfg -D $DBG &
 
     if [ $? -ne 0 ]; then
@@ -547,20 +561,20 @@ function stop_backend(){
         sleep 1
         checkvalgrind
     fi
-    sudo pkill -f clixon_backend # extra ($BUSER?)
+#    sudo pkill -f clixon_backend # extra ($BUSER?)
 }
 
 # Wait for restconf to stop sending  502 Bad Gateway
 function wait_backend(){
     freq=$(chunked_framing "<rpc $DEFAULTNS><ping $LIBNS/></rpc>")
-    reply=$(echo "$freq" | $clixon_netconf -q1ef $cfg) 
+    reply=$(echo "$freq" | $clixon_netconf -q1ef $cfg)
 #    freply=$(chunked_framing "<rpc-reply $DEFAULTNS><ok/></rpc-reply>")
 #    chunked_equal "$reply" "$freply"
     let i=0;
     while [[ $reply != *"<rpc-reply"* ]]; do
 #       echo "sleep $DEMSLEEP"
         sleep $DEMSLEEP
-        reply=$(echo "<rpc $ÐEFAULTSNS $LIBNS><ping/></rpc>]]>]]>" | clixon_netconf -qef $cfg 2> /dev/null)
+        reply=$(echo "<rpc $ÐEFAULTSNS $LIBNS><ping/></rpc>]]>]]>" | $clixon_netconf -qef $cfg 2> /dev/null)
 #       echo "reply:$reply"
         let i++;
 #       echo "wait_backend  $i"
@@ -568,18 +582,21 @@ function wait_backend(){
             err "backend timeout $DEMWAIT seconds"
         fi
     done
+    stty $STTYSETTINGS >/dev/null
 }
 
 # Start restconf daemon
 # @see wait_restconf
 function start_restconf(){
-    STTYSETTINGS=`stty -g`
+    # remove -g
+    local clixon_restconf_="${clixon_restconf#sudo -g * }"
     # Start in background 
-    echo "sudo -u $wwwstartuser -s $clixon_restconf $RCLOG -D $DBG $*"
-    sudo -u $wwwstartuser -s $clixon_restconf $RCLOG -D $DBG $* </dev/null &>/dev/null &
+#    echo "sudo -u $wwwstartuser ${clixon_restconf_} $RCLOG -D $DBG $*"
+    sudo -u $wwwstartuser $clixon_restconf_ $RCLOG -D $DBG $* </dev/null &>/dev/null &
     if [ $? -ne 0 ]; then
         err1 "expected 0" "$?"
     fi
+    RCPID=$!
 }
 
 # Stop restconf daemon before test
@@ -593,10 +610,12 @@ function stop_restconf_pre(){
 # 2) Dont use -u $WWWUSER since clixon_restconf may drop privileges.
 # 3) After fork, it seems to take some time before name is right
 function stop_restconf(){
-    sudo pkill -f clixon_restconf
-    if [ $valgrindtest -eq 3 ]; then 
+    if [ $valgrindtest -eq 3 ]; then
+        sudo kill ${RCPID}
         sleep 1
         checkvalgrind
+    else
+        sudo pkill -f clixon_restconf
     fi
 }
 
@@ -614,6 +633,7 @@ function wait_restconf(){
     fi
 #    echo "curl $CURLOPTS -X GET $myproto://localhost/restconf"
     hdr=$(curl $CURLOPTS -X GET $myproto://localhost/restconf 2> /dev/null)
+    stty $STTYSETTINGS >/dev/null
 #    echo "hdr:\"$hdr\""
     let i=0;
     while [[ "$hdr" != *"200"* ]]; do
@@ -630,8 +650,6 @@ function wait_restconf(){
     if [ $valgrindtest -eq 3 ]; then 
         sleep 2 # some problems with valgrind
     fi
-
-  stty $STTYSETTINGS
 }
 
 # Wait for restconf to stop 
@@ -672,16 +690,50 @@ function wait_snmp()
     
 # End of single test, final tests before normal exit of test
 # Note this is a single test started by new, not a total test suite
+# Unset common variables that may affect next test if run in sequence by
+# eg all.sh or mem.sh
 function endtest()
 {
+    # Commented from now, it is unclear what destroys the tty, if something does the original
+    # problem should be fixed at the origin.
+    #    stty $STTYSETTINGS >/dev/null
+
     if [ $valgrindtest -eq 1 ]; then 
         checkvalgrind
     fi
+    # Unset common variables. More specific should be unset at end of script
+    unset RCPROTO
+    unset HAVE_LIBNGHTTP2
+    unset HVER
+    unset AUTOCLI
+    unset CURLOPTS
+    unset RESTCONFIG
+    unset LOGDST
+    unset fyang
+    unset ret
+    unset count
+    unset nr
+    unset format
+    unset perfnr
+    unset perfreq
+    unset pid
+    unset validatexml
+    unset xpath
+    unset clixon_util_datastore
+    unset clixon_util_json
+    unset clixon_util_xml
+    unset clixon_util_path
+    unset clixon_util_stream
+    unset clixon_util_xpath
+    unset clixon_util_xml
+    unset clixon_util_xml_mod
 }
 
 # Increment test number and print a nice string
 function new(){
-    endtest # finalize previous test
+    if [ $valgrindtest -eq 1 ]; then 
+        checkvalgrind
+    fi
     testnr=`expr $testnr + 1`
     testi=`expr $testi + 1`
     testname=$1
@@ -780,6 +832,7 @@ function expecteof(){
   retval=$2
   input=$3
   expect=$4
+
   if [ $# -gt 4 ]; then
       errfile=$(mktemp)
       expecterr=$5
@@ -1001,6 +1054,7 @@ EOF
 # clixon tester read from file for large tests
 # Arguments:
 # - Command
+# - expected retval
 # - Filename to pipe to stdin 
 # - expected stdout outcome
 function expecteof_file(){
@@ -1027,7 +1081,7 @@ function expecteof_file(){
   fi
 }
 
-# test script with timeout, used for notificatin streams
+# test script for NETCONF with timeout, used for notification streams
 # - (not-evaluated) expression
 # - expected command return value (0 if OK) (NOOP for now)
 # - stdin input1  This is NOT encoded, eg preamble/hello
@@ -1198,11 +1252,12 @@ emailAddress           = olof@hagsand.se
 [ req_attributes ]
 challengePassword      = test
 
+[ x509v3_extensions ]
+basicConstraints = critical,CA:true
 EOF
 
     # Generate CA cert
-    openssl req -new -x509 -days 1 -config $tmpdir/ca.cnf -keyout $cakey -out $cacert || err "Generate CA cert"
-
+    openssl req -batch -new -x509 -extensions x509v3_extensions -days 1 -config $tmpdir/ca.cnf -keyout $cakey -out $cacert || err1 "Generate CA cert"
     rm -rf $tmpdir
 }
 
@@ -1247,7 +1302,7 @@ EOF
     openssl genpkey -algorithm RSA -out $srvkey  || err "Generate server key"
 
     # Generate CSR (signing request)
-    openssl req -new -config $tmpdir/srv.cnf -key $srvkey -out $tmpdir/srv_csr.pem || err "Generate signing request"
+    openssl req -batch -new -config $tmpdir/srv.cnf -key $srvkey -out $tmpdir/srv_csr.pem || err "Generate signing request"
 
     # Sign server cert by CA
     openssl x509 -req -extfile $tmpdir/srv.cnf -days 1 -passin "pass:password" -in $tmpdir/srv_csr.pem -CA $cacert -CAkey $cakey -CAcreateserial -out $srvcert || err "Sign server cert"

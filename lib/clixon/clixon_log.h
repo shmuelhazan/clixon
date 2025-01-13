@@ -34,43 +34,57 @@
   ***** END LICENSE BLOCK *****
 
  *
- * Regular logging and debugging. Syslog using levels.
+ * Regular logging, syslog using levels.
  */
 
 #ifndef _CLIXON_LOG_H_
 #define _CLIXON_LOG_H_
 
+#include "clixon_xml.h"			/* for cxobj */
+
 /*
  * Constants
  */
-/* Where to log (masks) */
-#define CLICON_LOG_SYSLOG 1 /* print logs on syslog */
-#define CLICON_LOG_STDERR 2 /* print logs on stderr */
-#define CLICON_LOG_STDOUT 4 /* print logs on stdout */
-#define CLICON_LOG_FILE   8 /* print logs on clicon_log_filename */
+/*! Log destination as bitfields (masks)
+ *
+ * @see logdstmap Symbolic mapping (if you change here you may need to change logdstmap)
+ * @see also log_desination_t in clixon-config.yang
+ */
+#define CLIXON_LOG_SYSLOG 0x01 /* print logs on syslog */
+#define CLIXON_LOG_STDERR 0x02 /* print logs on stderr */
+#define CLIXON_LOG_STDOUT 0x04 /* print logs on stdout */
+#define CLIXON_LOG_FILE   0x08 /* print logs on clixon_log_filename */
 
-/* Debug-level masks */
-#define CLIXON_DBG_DEFAULT 1 /* Default logs */
-#define CLIXON_DBG_MSG     2 /* In/out messages and datastore reads */
-#define CLIXON_DBG_DETAIL  4 /* Detailed logs */
-#define CLIXON_DBG_EXTRA   8 /* Extra Detailed logs */
+/* What kind of log (only for customizable error/logs) */
+enum clixon_log_type{
+    LOG_TYPE_LOG,
+    LOG_TYPE_ERR,
+    LOG_TYPE_DEBUG
+};
+
+/*
+ * Macros
+ */
+#define clixon_log(h, l, _fmt, args...) clixon_log_fn((h), 1, (l), NULL, _fmt , ##args)
+#define clixon_log_xml(h, l, x, _fmt, args...) clixon_log_fn((h), 1, (l), x, _fmt , ##args)
+
+// COMPAT_7_1
+#define clixon_get_logflags() clixon_logflags_get()
 
 /*
  * Prototypes
  */
-int clicon_log_init(char *ident, int upto, int flags);
-int clicon_log_exit(void);
-int clicon_log_opt(char c);
-int clicon_log_file(char *filename);
-int clicon_log_string_limit_set(size_t sz);
-size_t clicon_log_string_limit_get(void);
-int clicon_get_logflags(void);
-int clicon_log_str(int level, char *msg);
-int clicon_log(int level, const char *format, ...) __attribute__ ((format (printf, 2, 3)));
-int clicon_debug(int dbglevel, const char *format, ...) __attribute__ ((format (printf, 2, 3)));
-int clicon_debug_init(int dbglevel, FILE *f);
-int clicon_debug_get(void);
-
-char *mon2name(int md);
+char    *clixon_logdst_key2str(int keyword);
+int      clixon_logdst_str2key(char *str);
+int      clixon_log_init(clixon_handle h, char *ident, int upto, uint16_t flags);
+int      clixon_log_exit(void);
+int      clixon_log_opt(char c);
+int      clixon_log_file(char *filename);
+int      clixon_log_string_limit_set(size_t sz);
+size_t   clixon_log_string_limit_get(void);
+uint16_t clixon_logflags_get(void);
+int      clixon_logflags_set(uint16_t flags);
+int      clixon_log_str(int level, char *msg);
+int      clixon_log_fn(clixon_handle h, int user, int level, cxobj *x, const char *format, ...) __attribute__ ((format (printf, 5, 6)));
 
 #endif  /* _CLIXON_LOG_H_ */

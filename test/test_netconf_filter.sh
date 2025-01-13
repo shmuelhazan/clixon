@@ -18,9 +18,9 @@ cat <<EOF > $cfg
   <CLICON_CLISPEC_DIR>/usr/local/lib/$APPNAME/clispec</CLICON_CLISPEC_DIR>
   <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
   <CLICON_BACKEND_DIR>/usr/local/lib/$APPNAME/backend</CLICON_BACKEND_DIR>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>/usr/local/var/$APPNAME</CLICON_XMLDB_DIR>
 </clixon-config>
 EOF
@@ -64,6 +64,20 @@ expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS>
 
 new "netconf commit"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><commit/></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+
+new "given key show key"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get><filter type='xpath' select=\"/fi:x/fi:y[fi:a='1']/fi:a\" xmlns:fi='urn:example:filter' /></get></rpc>" "" "<rpc-reply $DEFAULTNS><data><x xmlns=\"urn:example:filter\"><y><a>1</a></y></x></data></rpc-reply>"
+
+new "given key show value"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get><filter type='xpath' select=\"/fi:x/fi:y[fi:a='1']/fi:b\" xmlns:fi='urn:example:filter' /></get></rpc>" "" "<rpc-reply $DEFAULTNS><data><x xmlns=\"urn:example:filter\"><y><a>1</a><b>1</b></y></x></data></rpc-reply>"
+
+# XXX Bug, see https://github.com/clicon/clixon/issues/414
+#new "given value show key"
+#expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get><filter type='xpath' select=\"/fi:x/fi:y[fi:b='1']/fi:a\" xmlns:fi='urn:example:filter' /></get></rpc>" "" "<rpc-reply $DEFAULTNS><data><x xmlns=\"urn:example:filter\"><y><a>1</a></y></x></data></rpc-reply>"
+
+# OK, see motivation of case (2) in https://github.com/clicon/clixon/issues/414
+new "given value show value"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get><filter type='xpath' select=\"/fi:x/fi:y[fi:b='1']/fi:b\" xmlns:fi='urn:example:filter' /></get></rpc>" "" "<rpc-reply $DEFAULTNS><data><x xmlns=\"urn:example:filter\"><y><a>1</a><b>1</b></y></x></data></rpc-reply>"
 
 new "wrong filter type"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get><filter type='foo'><x xmlns='urn:example:filter'><y><a>1</a></y></x></filter></get></rpc>" "" "<rpc-reply $DEFAULTNS><rpc-error><error-tag>operation-failed</error-tag><error-type>applicatio</error-type><error-severity>error</error-severity><error-message>filter type not supported</error-message><error-info>type</error-info></rpc-error></rpc-reply>"

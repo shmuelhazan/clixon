@@ -51,8 +51,8 @@ cat <<EOF > $cfg
   <CLICON_RESTCONF_DIR>/usr/local/lib/$APPNAME/restconf</CLICON_RESTCONF_DIR>
   <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_XMLDB_UPGRADE_CHECKOLD>true</CLICON_XMLDB_UPGRADE_CHECKOLD>
   <CLICON_NACM_MODE>internal</CLICON_NACM_MODE>
@@ -101,7 +101,7 @@ cat <<EOF > $dir/startup_db
        <group>
          <name>admin</name>
          <user-name>root</user-name>
-         <user-name>$USER</user-name>
+         $EXTRAUSER
        </group>
      </groups>
      <rule-list>
@@ -179,6 +179,9 @@ function testrun()
     
     # Change restconf configuration before start restconf daemon
     RESTCONFIG=$(restconf_config $auth false)
+    if [ $? -ne 0 ]; then
+        err1 "Error when generating certs"
+    fi
 
     # Start with common config, then append fcgi/native specific config
     cat <<EOF > $cfg
@@ -194,8 +197,8 @@ function testrun()
   <CLICON_RESTCONF_DIR>/usr/local/lib/$APPNAME/restconf</CLICON_RESTCONF_DIR>
   <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_NACM_MODE>internal</CLICON_NACM_MODE>
   <CLICON_ANONYMOUS_USER>$anonymous</CLICON_ANONYMOUS_USER>
@@ -288,8 +291,6 @@ if [ $BE -ne 0 ]; then
 fi
 
 # unset conditional parameters
-unset RCPROTO
-unset HVER
 unset RESTCONFIG1
 unset MSGANON
 unset MSGWILMA

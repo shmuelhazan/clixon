@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# List pagination tests according to draft-wwlh-netconf-list-pagination-00
+# List pagination tests according to draft-ietf-netconf-list-pagination-04
 # Follow the example-social example in the draft and the tests in Appendix A.2 + A.3.1/A.3.2
-# Basically only offset and limit supported
 
 # Magic line must be first in script (see README.md)
 s="$_" ; . ./lib.sh || if [ "$s" = $0 ]; then exit 0; else return 0; fi
@@ -12,11 +11,17 @@ cfg=$dir/conf.xml
 fexample=$dir/example-social.yang
 fstate=$dir/mystate.xml
 
+# Set to true if LIST_PAGINATION_REMAINING is enabled
+REMAINING=false
+
 # Common example-module spec (fexample must be set)
 . ./example_social.sh
 
 # Define default restconfig config: RESTCONFIG
 RESTCONFIG=$(restconf_config none false)
+if [ $? -ne 0 ]; then
+    err1 "Error when generating certs"
+fi
 
 # Validate internal state xml
 : ${validatexml:=false}
@@ -29,9 +34,9 @@ cat <<EOF > $cfg
   <CLICON_YANG_DIR>${YANG_INSTALLDIR}</CLICON_YANG_DIR>
   <CLICON_YANG_DIR>$IETFRFC</CLICON_YANG_DIR>
   <CLICON_YANG_MAIN_DIR>$dir</CLICON_YANG_MAIN_DIR>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
   <CLICON_BACKEND_DIR>/usr/local/lib/$APPNAME/backend</CLICON_BACKEND_DIR>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_XMLDB_FORMAT>json</CLICON_XMLDB_FORMAT>
   <CLICON_STREAM_DISCOVERY_RFC8040>true</CLICON_STREAM_DISCOVERY_RFC8040>
@@ -43,7 +48,7 @@ cat <<EOF > $cfg
 </clixon-config>
 EOF
 
-# See draft-wwlh-netconf-list-pagination-00 A.2 (except stats and audit-log)
+# See draft-netconf-list-pagination-04.txt A.2 (except stats and audit-log)
 # XXX: "config" without 
 cat <<'EOF' > $dir/startup_db
 {"config":
@@ -161,9 +166,9 @@ cat <<'EOF' > $dir/startup_db
 }
 EOF
 
-# See draft-wwlh-netconf-list-pagination-00 A.2 (only stats and audit-log)
+# See draft-netconf-list-pagination-04.txt A.2 (only stats and audit-log)
 cat<<EOF > $fstate
-<members xmlns="http://example.com/ns/example-social">
+<members xmlns="https://example.com/ns/example-social">
    <member>
       <member-id>alice</member-id>
       <stats>
@@ -205,7 +210,7 @@ cat<<EOF > $fstate
       </stats>
    </member>
 </members>
-<audit-logs xmlns="http://example.com/ns/example-social">
+<audit-logs xmlns="https://example.com/ns/example-social">
    <audit-log>
       <timestamp>": "2020-10-11T06:47:59Z",</timestamp>
            <member-id>alice</member-id>
@@ -282,18 +287,18 @@ function testlimit()
         if [ $i = 0 ]; then
             # Note: if REMAINING is enabled:
             #       if [ $limit == 0 ]; then
-            if true; then
-                el="<uint8-numbers>$li</uint8-numbers>"
-                el2="<uint8-numbers xmlns=\"http://example.com/ns/example-social\">$li</uint8-numbers>"
-            else
+            if ${REMAINING}; then
                 el="<uint8-numbers lp:remaining=\"$remaining\" xmlns:lp=\"urn:ietf:params:xml:ns:yang:ietf-list-pagination\">$li</uint8-numbers>"
-                el2="<uint8-numbers lp:remaining=\"$remaining\" xmlns:lp=\"urn:ietf:params:xml:ns:yang:ietf-list-pagination\" xmlns=\"http://example.com/ns/example-social\">$li</uint8-numbers>"
+                el2="<uint8-numbers lp:remaining=\"$remaining\" xmlns:lp=\"urn:ietf:params:xml:ns:yang:ietf-list-pagination\" xmlns=\"https://example.com/ns/example-social\">$li</uint8-numbers>"
                 jsonmeta=",\"@example-social:uint8-numbers\":\[{\"ietf-list-pagination:remaining\":$remaining}\]"
+            else
+                el="<uint8-numbers>$li</uint8-numbers>"
+                el2="<uint8-numbers xmlns=\"https://example.com/ns/example-social\">$li</uint8-numbers>"
             fi
             jsonlist="$li"
         else
             el="<uint8-numbers>$li</uint8-numbers>"
-            el2="<uint8-numbers xmlns=\"http://example.com/ns/example-social\">$li</uint8-numbers>"            jsonlist="$jsonlist,$li"
+            el2="<uint8-numbers xmlns=\"https://example.com/ns/example-social\">$li</uint8-numbers>"            jsonlist="$jsonlist,$li"
         fi
         xmllist="$xmllist$el"
         xmllist2="$xmllist2$el2"
@@ -321,18 +326,18 @@ function testlimit()
     if [ -z "$list" ]; then
         reply="<rpc-reply $DEFAULTNS><data/></rpc-reply>"
     else
-        reply="<rpc-reply $DEFAULTNS><data><members xmlns=\"http://example.com/ns/example-social\"><member><member-id>alice</member-id><favorites>$xmllist</favorites></member></members></data></rpc-reply>"
+        reply="<rpc-reply $DEFAULTNS><data><members xmlns=\"https://example.com/ns/example-social\"><member><member-id>alice</member-id><favorites>$xmllist</favorites></member></members></data></rpc-reply>"
     fi
     new "limit=$limit offset=$offset NETCONF get-config"
-    expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get-config><source><running/></source><filter type=\"xpath\" select=\"/es:members/es:member[es:member-id='alice']/es:favorites/es:uint8-numbers\" xmlns:es=\"http://example.com/ns/example-social\"/><list-pagination xmlns=\"urn:ietf:params:xml:ns:yang:ietf-list-pagination-nc\">$limitxmlstr$offsetxmlstr</list-pagination></get-config></rpc>" "" "$reply"
+    expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get-config><source><running/></source><filter type=\"xpath\" select=\"/es:members/es:member[es:member-id='alice']/es:favorites/es:uint8-numbers\" xmlns:es=\"https://example.com/ns/example-social\"/><list-pagination xmlns=\"urn:ietf:params:xml:ns:yang:ietf-list-pagination-nc\">$limitxmlstr$offsetxmlstr</list-pagination></get-config></rpc>" "" "$reply"
 
     if [ -z "$list" ]; then
         reply="<rpc-reply $DEFAULTNS><data/></rpc-reply>"
     else
-        reply="<rpc-reply $DEFAULTNS><data><members xmlns=\"http://example.com/ns/example-social\"><member><member-id>alice</member-id><favorites>$xmllist</favorites></member></members></data></rpc-reply>"
+        reply="<rpc-reply $DEFAULTNS><data><members xmlns=\"https://example.com/ns/example-social\"><member><member-id>alice</member-id><favorites>$xmllist</favorites></member></members></data></rpc-reply>"
     fi
     new "limit=$limit offset=$offset NETCONF get"
-    expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get><filter type=\"xpath\" select=\"/es:members/es:member[es:member-id='alice']/es:favorites/es:uint8-numbers\" xmlns:es=\"http://example.com/ns/example-social\"/><list-pagination xmlns=\"urn:ietf:params:xml:ns:yang:ietf-list-pagination-nc\">$limitxmlstr$offsetxmlstr</list-pagination></get></rpc>" "" "$reply"
+    expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get><filter type=\"xpath\" select=\"/es:members/es:member[es:member-id='alice']/es:favorites/es:uint8-numbers\" xmlns:es=\"https://example.com/ns/example-social\"/><list-pagination xmlns=\"urn:ietf:params:xml:ns:yang:ietf-list-pagination-nc\">$limitxmlstr$offsetxmlstr</list-pagination></get></rpc>" "" "$reply"
 
     if [ -z "$list" ]; then
         reply="<xml-list xmlns=\"urn:ietf:params:xml:ns:yang:ietf-list-pagination\"/>"
@@ -380,7 +385,7 @@ new "wait restconf"
 wait_restconf
 
 new "Baseline: no pagination"
-expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get><filter type=\"xpath\" select=\"/es:members/es:member[es:member-id='alice']/es:favorites/es:uint8-numbers\" xmlns:es=\"http://example.com/ns/example-social\"/></get></rpc>" "<rpc-reply $DEFAULTNS><data><members xmlns=\"http://example.com/ns/example-social\"><member><member-id>alice</member-id><favorite"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><get><filter type=\"xpath\" select=\"/es:members/es:member[es:member-id='alice']/es:favorites/es:uint8-numbers\" xmlns:es=\"https://example.com/ns/example-social\"/></get></rpc>" "<rpc-reply $DEFAULTNS><data><members xmlns=\"https://example.com/ns/example-social\"><member><member-id>alice</member-id><favorite"
 
 new "A.3.1.1. limit=1"
 testlimit 0 1 5 "17"
@@ -429,7 +434,6 @@ if [ $BE -ne 0 ]; then
     stop_backend -f $cfg
 fi
 
-unset RESTCONFIG
 unset validatexml
 
 rm -rf $dir

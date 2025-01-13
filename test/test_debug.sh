@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Turn on debug on backend/cli/netconf
-# Note, restconf debug used to be tested but is no longer tested here,
-# maybe in test_restconf_internal?
+# Also some log destination tests
+# Note no restconf debug test
 
 # Magic line must be first in script (see README.md)
 s="$_" ; . ./lib.sh || if [ "$s" = $0 ]; then exit 0; else return 0; fi
@@ -13,6 +13,9 @@ fyang=$dir/restconf.yang
 
 # Define default restconfig config: RESTCONFIG
 RESTCONFIG=$(restconf_config none false)
+if [ $? -ne 0 ]; then
+    err1 "Error when generating certs"
+fi
 
 #  <CLICON_YANG_MODULE_MAIN>example</CLICON_YANG_MODULE_MAIN>
 cat <<EOF > $cfg
@@ -21,7 +24,7 @@ cat <<EOF > $cfg
   <CLICON_CONFIGFILE>$cfg</CLICON_CONFIGFILE>
   <CLICON_YANG_DIR>${YANG_INSTALLDIR}</CLICON_YANG_DIR>
   <CLICON_YANG_MAIN_FILE>$fyang</CLICON_YANG_MAIN_FILE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
   <CLICON_BACKEND_PIDFILE>$dir/restconf.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>/usr/local/var/$APPNAME</CLICON_XMLDB_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
@@ -81,8 +84,57 @@ wait_restconf
 new "Set backend debug using netconf"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><debug $LIBNS><level>1</level></debug></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
 
-new "Set cli debug using cli"
+# Debug
+new "cli debug cli"
 expectpart "$($clixon_cli -1 -f $cfg -l o debug cli 1)" 0 "^$"
+
+new "cli debug, expect 0"
+expectpart "$($clixon_cli -1 -f $cfg show debug cli)" 0 "CLI debug:0x0"
+
+new "cli debug -o single"
+expectpart "$($clixon_cli -1 -f $cfg -o CLICON_DEBUG=msg show debug cli)" 0 "CLI debug:0x2" --not-- "CLI debug:0x20"
+
+new "cli debug -o multi"
+expectpart "$($clixon_cli -1 -f $cfg -o CLICON_DEBUG="msg app2" show debug cli)" 0 "CLI debug:0x200002"
+
+new "cli debug -D multi"
+expectpart "$($clixon_cli -1 -f $cfg -D msg -D app2 show debug cli)" 0
+
+# Log destination
+new "cli log -lf<file>"
+rm -f $dir/clixon.log
+expectpart "$($clixon_cli -1 -lf$dir/clixon.log -f $cfg show version)" 0
+if [ ! -f "$dir/clixon.log" ]; then
+    err "$dir/clixon.log" "No file"
+fi
+
+new "cli log -lfile"
+rm -f $dir/clixon.log
+expectpart "$($clixon_cli -1 -lfile -f $cfg show version)" 0
+if [ -f "$dir/clixon.log" ]; then
+    err "No file" "$dir/clixon.log"
+fi
+
+new "cli log -lfile + CLICON_LOG_FILE"
+rm -f $dir/clixon.log
+expectpart "$($clixon_cli -1 -lfile -o CLICON_LOG_FILE=$dir/clixon.log -f $cfg show version)" 0
+if [ ! -f "$dir/clixon.log" ]; then
+    err "$dir/clixon.log" "No file"
+fi
+
+rm -f $dir/clixon.log
+new "cli log -o CLICON_LOG_DESTINATION + CLICON_LOG_FILE"
+expectpart "$($clixon_cli -1 -o CLICON_LOG_DESTINATION=file -o CLICON_LOG_FILE=$dir/clixon.log -f $cfg show version)" 0
+if [ ! -f "$dir/clixon.log" ]; then
+    err "$dir/clixon.log" "No file"
+fi
+
+rm -f $dir/clixon.log
+new "cli log -o CLICON_LOG_DESTINATION + CLICON_LOG_FILE multi"
+expectpart "$($clixon_cli -1 -o CLICON_LOG_DESTINATION="stdout file" -o CLICON_LOG_FILE=$dir/clixon.log -f $cfg show version)" 0
+if [ ! -f "$dir/clixon.log" ]; then
+    err "$dir/clixon.log" "No file"
+fi
 
 new "Set backend debug using cli"
 expectpart "$($clixon_cli -1 -f $cfg -l o debug backend 1)" 0 "^$"
@@ -109,9 +161,6 @@ if [ $BE -ne 0 ]; then
     # kill backend
     stop_backend -f $cfg
 fi
-
-# Set by restconf_config
-unset RESTCONFIG
 
 rm -rf $dir
 

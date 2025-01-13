@@ -29,6 +29,9 @@ cfg=$dir/conf.xml
 
 RCPROTO=http
 RESTCONFIG=$(restconf_config none false)
+if [ $? -ne 0 ]; then
+    err1 "Error when generating certs"
+fi
 
 # Clixon config
 cat <<EOF > $cfg
@@ -43,8 +46,8 @@ cat <<EOF > $cfg
   <CLICON_RESTCONF_DIR>/usr/local/lib/$APPNAME/restconf</CLICON_RESTCONF_DIR>
   <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>/usr/local/var/$APPNAME</CLICON_XMLDB_DIR>
   <CLICON_RESTCONF_HTTP2_PLAIN>true</CLICON_RESTCONF_HTTP2_PLAIN>
   $RESTCONFIG <!-- only fcgi -->
@@ -104,7 +107,7 @@ function testrun()
         # http/2-only is always an error in http/1 + http/2 mode
         new "restconf http2 prior-knowledge (h2:$h2enable)"
         echo "curl -Ssik --http2-prior-knowledge -X GET http://localhost/.well-known/host-meta"
-        expectpart "$(curl -Ssik --http2-prior-knowledge -X GET http://localhost/.well-known/host-meta 2>&1)" "16 52 55"
+        expectpart "$(curl -Ssik --http2-prior-knowledge -X GET http://localhost/.well-known/host-meta 2>&1)" "16 52 55 56"
 
     elif [ ${HAVE_LIBNGHTTP2} = true -a ${HAVE_HTTP1} = false ]; then  # http/2 only
 
@@ -165,7 +168,7 @@ function testrun()
         # http/2-only is always an error in http/1 + http/2 mode
         new "restconf http2 prior-knowledge (h2:$h2enable)"
         echo "curl -Ssik --http2-prior-knowledge -X GET http://localhost/.well-known/host-meta"
-        expectpart "$(curl -Ssik --http2-prior-knowledge -X GET http://localhost/.well-known/host-meta 2>&1)" "16 52 55"
+        expectpart "$(curl -Ssik --http2-prior-knowledge -X GET http://localhost/.well-known/host-meta 2>&1)" "16 52 55 56"
 
     fi
 
@@ -191,10 +194,6 @@ testrun false
 
 new "enable plain http/2"
 testrun true
-
-# Set by restconf_config
-unset RESTCONFIG
-unset RCPROTO
 
 rm -rf $dir
 

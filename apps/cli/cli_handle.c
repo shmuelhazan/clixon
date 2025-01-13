@@ -49,7 +49,6 @@
 #include <errno.h>
 #include <assert.h>
 #include <dlfcn.h>
-#include <dirent.h>
 #include <grp.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -60,7 +59,7 @@
 /* cligen */
 #include <cligen/cligen.h>
 
-/* clicon */
+/* clixon */
 #include <clixon/clixon.h>
 
 #include "clixon_cli_api.h"
@@ -69,14 +68,15 @@
 
 #define CLICON_MAGIC 0x99aafabe
 
-#define handle(h) (assert(clicon_handle_check(h)==0),(struct cli_handle *)(h))
+#define handle(h) (assert(clixon_handle_check(h)==0),(struct cli_handle *)(h))
 #define cligen(h) (handle(h)->cl_cligen)
 
-/*! CLI specific handle added to header CLICON handle
+/*! CLI specific handle added to header Clixon handle
+ *
  * This file should only contain access functions for the _specific_
  * entries in the struct below.
- * @note The top part must be equivalent to struct clicon_handle in clixon_handle.c
- * @see struct clicon_handle, struct backend_handle
+ * @note The top part must be equivalent to struct clixon_handle in clixon_handle.c
+ * @see struct clixon_handle, struct backend_handle
  */
 struct cli_handle {
     int             cl_magic;    /* magic (HDR)*/
@@ -87,48 +87,44 @@ struct cli_handle {
     /* ------ end of common handle ------ */
 
     cligen_handle   cl_cligen;   /* cligen handle */
-    cli_syntax_t   *cl_stx;      /* CLI syntax structure */
 };
 
 /*! Return a clicon handle for other CLICON API calls
  */
-clicon_handle
+clixon_handle
 cli_handle_init(void)
 {
     struct cli_handle *cl;
     cligen_handle      clih = NULL;
-    clicon_handle      h = NULL;
+    clixon_handle      h = NULL;
 
-    if ((cl = (struct cli_handle *)clicon_handle_init0(sizeof(struct cli_handle))) == NULL)
+    if ((cl = (struct cli_handle *)clixon_handle_init0(sizeof(struct cli_handle))) == NULL)
         return NULL;
 
     if ((clih = cligen_init()) == NULL){
-        clicon_handle_exit((clicon_handle)cl);
+        clixon_handle_exit((clixon_handle)cl);
         goto done;
     }
     cligen_userhandle_set(clih, cl);
-    cligen_eval_wrap_fn_set(clih, plugin_context_check, cl);
+    cligen_eval_wrap_fn_set(clih, clixon_resource_check, cl);
     cl->cl_cligen = clih;
 
-    h = (clicon_handle)cl;
+    h = (clixon_handle)cl;
   done:
     return h;
 }
 
 /*! Free clicon handle
+ *
+ * @param[in] h      Clixon handle
  */
 int
-cli_handle_exit(clicon_handle h)
+cli_handle_exit(clixon_handle h)
 {
     cligen_handle      ch = cligen(h);
-    struct cli_handle *cl = handle(h);
 
-    if (cl->cl_stx)
-        free(cl->cl_stx);
-    clicon_handle_exit(h); /* frees h and options */
-    
+    clixon_handle_exit(h); /* frees h and options */
     cligen_exit(ch);
-
     return 0;
 }
 
@@ -136,37 +132,18 @@ cli_handle_exit(clicon_handle h)
  * cli-specific handle access functions
  *----------------------------------------------------------*/
 
-/*! Get current syntax-group */
-cli_syntax_t *
-cli_syntax(clicon_handle h)
-{
-    struct cli_handle *cl = handle(h);
-    return cl->cl_stx;
-}
-
-/*! Set current syntax-group */
-int
-cli_syntax_set(clicon_handle h, 
-               cli_syntax_t *stx)
-{
-    struct cli_handle *cl = handle(h);
-
-    if (cl->cl_stx)
-        free(cl->cl_stx);
-    cl->cl_stx = stx;
-    return 0;
-}
-
-
-/*! Return clicon handle */
+/*! Return clicon handle 
+ *
+ * @param[in] h      Clixon handle
+ */
 cligen_handle
-cli_cligen(clicon_handle h)
+cli_cligen(clixon_handle h)
 {
     return cligen(h);
 }
 
 int
-cli_parse_file(clicon_handle h,
+cli_parse_file(clixon_handle h,
                FILE         *f,
                char         *name, /* just for errs */
                parse_tree   *pt,
@@ -174,30 +151,31 @@ cli_parse_file(clicon_handle h,
 {
     cligen_handle ch = cligen(h);
 
-    return cligen_parse_file(ch, f, name, pt, globals);
+    return clispec_parse_file(ch, f, name, NULL, pt, globals);
 }
 
 int
-cli_susp_hook(clicon_handle     h,
+cli_susp_hook(clixon_handle     h,
               cligen_susp_cb_t *fn)
 {
     cligen_handle ch = cligen(h);
 
     /* This assume first arg of fn can be treated as void* */
-    return cligen_susp_hook(ch, fn); 
+    return cligen_susp_hook(ch, fn);
 }
+
 int
-cli_interrupt_hook(clicon_handle          h,
+cli_interrupt_hook(clixon_handle          h,
                    cligen_interrupt_cb_t *fn)
 {
     cligen_handle ch = cligen(h);
 
     /* This assume first arg of fn can be treated as void* */
-    return cligen_interrupt_hook(ch, fn); 
+    return cligen_interrupt_hook(ch, fn);
 }
 
 int
-cli_prompt_set(clicon_handle h,
+cli_prompt_set(clixon_handle h,
                char         *prompt)
 {
     cligen_handle ch = cligen(h);
@@ -205,7 +183,7 @@ cli_prompt_set(clicon_handle h,
 }
 
 int
-cli_logsyntax_set(clicon_handle h,
+cli_logsyntax_set(clixon_handle h,
                   int           status)
 {
     cligen_handle ch = cligen(h);

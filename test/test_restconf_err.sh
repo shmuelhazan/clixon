@@ -53,6 +53,9 @@ fstate=$dir/state.xml
 
 # Define default restconfig config: RESTCONFIG
 RESTCONFIG=$(restconf_config none false)
+if [ $? -ne 0 ]; then
+    err1 "Error when generating certs"
+fi
 
 #  <CLICON_YANG_MODULE_MAIN>example</CLICON_YANG_MODULE_MAIN>
 cat <<EOF > $cfg
@@ -62,7 +65,7 @@ cat <<EOF > $cfg
   <CLICON_YANG_DIR>${YANG_INSTALLDIR}</CLICON_YANG_DIR>
   <CLICON_YANG_DIR>$dir</CLICON_YANG_DIR>
   <CLICON_YANG_MAIN_FILE>$fyang</CLICON_YANG_MAIN_FILE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
   <CLICON_BACKEND_PIDFILE>$dir/restconf.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_BACKEND_DIR>/usr/local/lib/$APPNAME/backend</CLICON_BACKEND_DIR>
   <CLICON_BACKEND_REGEXP>example_backend.so$</CLICON_BACKEND_REGEXP>
@@ -163,7 +166,7 @@ EOF
 
 # State file with error: wrong namespace
 cat <<EOF > $fstate
-<mystate xmlns="urn:example:foobar">
+<mystate xmlns="urn:example:clixon">
    <parameter>
       <name>x</name>
       <value>x</value>
@@ -305,6 +308,16 @@ new "restconf GET augment multi-namespace, no 2nd module in api-path, fail"
 expectpart "$(curl $CURLOPTS -X GET $RCPROTO://localhost/restconf/data/augment:route-config/dynamic/ospf)" 0 "HTTP/$HVER 404" '{"ietf-restconf:errors":{"error":{"error-type":"application","error-tag":"invalid-value","error-severity":"error","error-message":"Instance does not exist"}}}'
 
 #----------------------------------------------
+# State file with error: wrong namespace
+cat <<EOF > $fstate
+<mystate xmlns="urn:example:foobar">
+   <parameter>
+      <name>x</name>
+      <value>x</value>
+   </parameter>
+</mystate>
+EOF
+
 # Also generate an invalid state XML. This should generate an "Internal" error and the name of the
 new "restconf GET failed state"
 expectpart "$(curl $CURLOPTS -X GET -H 'Accept: application/yang-data+xml' $RCPROTO://localhost/restconf/data?content=nonconfig)" 0 "HTTP/$HVER 412" '<errors xmlns="urn:ietf:params:xml:ns:yang:ietf-restconf"><error><error-type>application</error-type><error-tag>operation-failed</error-tag><error-info><bad-element>mystate</bad-element></error-info><error-severity>error</error-severity><error-message>Failed to find YANG spec of XML node: mystate with parent: config in namespace: urn:example:foobar. Internal error, state callback returned invalid XML from plugin: example_backend</error-message></error></errors>'
@@ -335,13 +348,6 @@ if [ $BE -ne 0 ]; then
     # kill backend
     stop_backend -f $cfg
 fi
-
-# Set by restconf_config
-unset RESTCONFIG
-unset HVER
-unset RCPROTO
-unset CURLOPTS
-unset HAVE_LIBNGHTTP2
 
 rm -rf $dir
 

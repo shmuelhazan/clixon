@@ -32,7 +32,7 @@
 
   ***** END LICENSE BLOCK *****
 
- * Clixon XML XPATH 1.0 according to https://www.w3.org/TR/xpath-10
+ * Clixon XML XPath 1.0 according to https://www.w3.org/TR/xpath-10
  */
 #ifndef _CLIXON_XPATH_H
 #define _CLIXON_XPATH_H
@@ -66,10 +66,10 @@ enum axis_type{
     A_ANCESTOR_OR_SELF,
     A_ATTRIBUTE,
     A_CHILD,
-    A_DESCENDANT, 
+    A_DESCENDANT,
     A_DESCENDANT_OR_SELF,
     A_FOLLOWING,
-    A_FOLLOWING_SIBLING, 
+    A_FOLLOWING_SIBLING,
     A_NAMESPACE,
     A_PARENT,
     A_PRECEDING,
@@ -103,9 +103,10 @@ enum xp_type{
 };
 
 /*! XPATH Parsing generates a tree of nodes that is later traversed
- * That is, a tree-structured XPATH.
- * Note that the structure follows XPATH 1.0 closely. The drawback wit this is that the tree gets
- * very deep very quickly, even for simple XPATHs. 
+ *
+ * That is, a tree-structured XPath.
+ * Note that the structure follows XPath 1.0 closely. The drawback wit this is that the tree gets
+ * very deep very quickly, even for simple XPaths.
  */
 struct xpath_tree{
     enum xp_type       xs_type;
@@ -133,10 +134,10 @@ int   xpath_tree_eq(xpath_tree *xt1, xpath_tree *xt2, xpath_tree ***vec, size_t 
 xpath_tree *xpath_tree_traverse(xpath_tree *xt, ...);
 int   xpath_tree_free(xpath_tree *xs);
 int   xpath_parse(const char *xpath, xpath_tree **xptree);
-int   xpath_vec_ctx(cxobj *xcur, cvec *nsc, const char *xpath, int localonly, xp_ctx  **xrp);
+int   xpath_vec_ctx(cxobj *xcur, cvec *nsc, const char *xpath, int localonly, xp_ctx **xrp);
 
 int    xpath_vec_bool(cxobj *xcur, cvec *nsc, const char *xpformat, ...) __attribute__ ((format (printf, 3, 4)));
-int    xpath_vec_flag(cxobj *xcur, cvec *nsc, const char *xpformat, uint16_t flags, 
+int    xpath_vec_flag(cxobj *xcur, cvec *nsc, const char *xpformat, uint16_t flags,
                    cxobj ***vec, size_t *veclen, ...) __attribute__ ((format (printf, 3, 7)));
 
 /* Functions with explicit namespace context (nsc) set. If you do not need 
@@ -148,7 +149,13 @@ cxobj *xpath_first(cxobj *xcur, cvec *nsc, const char *xpformat,  ...) __attribu
 cxobj *xpath_first_localonly(cxobj *xcur, const char *xpformat,  ...) __attribute__ ((format (printf, 2, 3)));
 int    xpath_vec(cxobj *xcur, cvec *nsc, const char *xpformat, cxobj ***vec, size_t *veclen, ...) __attribute__ ((format (printf, 3, 6)));
 
-int xpath2canonical(const char *xpath0, cvec *nsc0, yang_stmt *yspec, char **xpath1, cvec **nsc1, cbuf **cbreason);
+int xpath2canonical(const char *xpath0, cvec *nsc0, yang_stmt *yspec,
+                    char **xpath1, cvec **nsc1, cbuf **cbreason);
+int xpath2canonical1(const char *xpath0, cvec *nsc0, yang_stmt *yspec, int exprstr,
+                     char **xpath1, cvec **nsc1, cbuf **cbreason);
 int xpath_count(cxobj *xcur, cvec *nsc, const char *xpath, uint32_t *count);
+int xml2xpath(cxobj *x, cvec *nsc, int spec, int apostrophe, char **xpath);
+int xpath2xml(char *xpath, cvec *nsc, cxobj *xtop, yang_stmt *ytop,
+              cxobj **xbotp, yang_stmt **ybotp, cxobj **xerr);
 
 #endif /* _CLIXON_XPATH_H */

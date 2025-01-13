@@ -58,15 +58,16 @@
 #include <cligen/cligen.h>
 
 /* clixon */
-#include "clixon_err.h"
 #include "clixon_string.h"
 #include "clixon_queue.h"
 #include "clixon_hash.h"
 #include "clixon_handle.h"
-#include "clixon_log.h"
-#include "clixon_options.h"
 #include "clixon_yang.h"
 #include "clixon_xml.h"
+#include "clixon_err.h"
+#include "clixon_log.h"
+#include "clixon_debug.h"
+#include "clixon_options.h"
 #include "clixon_yang_module.h"
 #include "clixon_netconf_lib.h"
 #include "clixon_xml_sort.h"
@@ -79,22 +80,23 @@
  * See rfc6241 3.1: urn:ietf:params:xml:ns:netconf:base:1.0.
  */
 static int _USE_NAMESPACE_NETCONF_DEFAULT = 0;
-            
+
 /*! Set if use internal default namespace mechanism or not
  *
  * This function shouldnt really be here, it sets a local variable from the value of the
  * option CLICON_NAMESPACE_NETCONF_DEFAULT, but the code where it is used is deep in the call
  * stack and cannot get the clicon handle currently.
- * @param[in] h  Clicon handle
+ * @param[in] h  Clixon handle
  */
 int
-xml_nsctx_namespace_netconf_default(clicon_handle h)
+xml_nsctx_namespace_netconf_default(clixon_handle h)
 {
     _USE_NAMESPACE_NETCONF_DEFAULT = clicon_option_bool(h, "CLICON_NAMESPACE_NETCONF_DEFAULT");
     return 0;
 }
 
 /*! Create and initialize XML namespace context
+ *
  * @param[in] prefix    Namespace prefix, or NULL for default
  * @param[in] ns        Set this namespace. If NULL create empty nsctx
  * @retval    nsc       Return namespace context in form of a cvec
@@ -116,7 +118,7 @@ xml_nsctx_init(char  *prefix,
     cvec *cvv = NULL;
 
     if ((cvv = cvec_new(0)) == NULL){
-        clicon_err(OE_XML, errno, "cvec_new");
+        clixon_err(OE_XML, errno, "cvec_new");
         goto done;
     }
     if (ns && xml_nsctx_add(cvv, prefix, ns) < 0)
@@ -126,6 +128,7 @@ xml_nsctx_init(char  *prefix,
 }
 
 /*! Free XML namespace context
+ *
  * @param[in] prefix    Namespace prefix, or NULL for default
  * @param[in] namespace Cached namespace to set (assume non-null?)
  * @retval    nsc       Return namespace context in form of a cvec
@@ -142,6 +145,7 @@ xml_nsctx_free(cvec *nsc)
 }
 
 /*! Get namespace given prefix (or NULL for default) from namespace context
+ *
  * @param[in] cvv    Namespace context
  * @param[in] prefix Namespace prefix, or NULL for default
  * @retval    ns     Cached namespace
@@ -152,18 +156,19 @@ xml_nsctx_get(cvec *cvv,
               char *prefix)
 {
     cg_var *cv;
-    
+
     if ((cv = cvec_find(cvv, prefix)) != NULL)
         return cv_string_get(cv);
     return NULL;
 }
 
 /*! Reverse get prefix given namespace
+ *
  * @param[in]  cvv    Namespace context
  * @param[in]  ns     Namespace 
  * @param[out] prefix Prefix (direct pointer)
- * @retval     0      No prefix found
  * @retval     1      Prefix found
+ * @retval     0      No prefix found
  * @note NULL is a valid prefix (default)
  */
 int
@@ -188,6 +193,7 @@ xml_nsctx_get_prefix(cvec  *cvv,
 }
 
 /*! Set or replace namespace in namespace context
+ *
  * @param[in] cvv       Namespace context
  * @param[in] prefix    Namespace prefix, or NULL for default
  * @param[in] ns        Cached namespace to set (assume non-null?)
@@ -201,7 +207,7 @@ xml_nsctx_add(cvec  *cvv,
 {
     int     retval = -1;
     cg_var *cv;
-    
+
     if ((cv = cvec_find(cvv, prefix)) != NULL) /* found, replace that */
         cv_string_set(cv, ns);
     else /* cvec exists, but not prefix */
@@ -225,7 +231,7 @@ xml_nsctx_node1(cxobj *xn,
     /* xmlns:t="<ns1>" prefix:xmlns, name:t
      * xmlns="<ns2>"   prefix:NULL   name:xmlns
      */
-    while ((xa = xml_child_each(xn, xa, CX_ATTR)) != NULL){
+    while ((xa = xml_child_each_attr(xn, xa)) != NULL){
         pf = xml_prefix(xa);
         nm = xml_name(xa);
         if (pf == NULL){
@@ -261,11 +267,12 @@ xml_nsctx_node1(cxobj *xn,
 }
 
 /*! Create and initialize XML namespace from XML node context
+ *
  * Fully explore all prefix:namespace pairs from context of one node
  * @param[in]  xn     XML node
  * @param[out] ncp    XML namespace context
  * @retval     0      OK
- * @retval     -1     Error
+ * @retval    -1      Error
  * @code
  * cxobj *x; // must initialize
  * cvec *nsc = NULL;
@@ -283,9 +290,9 @@ xml_nsctx_node(cxobj *xn,
 {
     int   retval = -1;
     cvec *nc = NULL;
-    
+
     if ((nc = cvec_new(0)) == NULL){
-        clicon_err(OE_XML, errno, "cvec_new");
+        clixon_err(OE_XML, errno, "cvec_new");
         goto done;
     }
     if (xml_nsctx_node1(xn, nc) < 0)
@@ -297,12 +304,13 @@ xml_nsctx_node(cxobj *xn,
 }
 
 /*! Create and initialize XML namespace context from Yang node (non-spec)
+ *
  * Primary use is Yang path statements, eg leafrefs and others
  * Fully explore all prefix:namespace pairs from context of one node
  * @param[in]  yn     Yang statement in module tree (or module itself)
- * @param[out] ncp    XML namespace context
+ * @param[out] ncp    XML namespace context (caller frees with cvec_free)
  * @retval     0      OK
- * @retval     -1     Error
+ * @retval    -1      Error
  * @code
  * yang_stmt *y; // must initialize
  * cvec *nsc = NULL;
@@ -312,6 +320,7 @@ xml_nsctx_node(cxobj *xn,
  * xml_nsctx_free(nsc)
  * @endcode
  * @see RFC7950 Sections 6.4.1 (and 9.9.2?)
+ * @see xml_nsctx_yangspec
  * @note Assume yn is in a yang structure (eg has parents and belongs to a (sub)module)
  */
 int
@@ -331,21 +340,22 @@ xml_nsctx_yang(yang_stmt *yn,
     char      *prefix;
     char      *mynamespace;
     char      *myprefix;
-    
+    int        inext;
+
     if (yang_keyword_get(yn) == Y_SPEC){
-        clicon_err(OE_YANG, EINVAL, "yang spec node is invalid argument");
+        clixon_err(OE_YANG, EINVAL, "yang spec node is invalid argument");
         goto done;
     }
     if ((nc = cvec_new(0)) == NULL){
-        clicon_err(OE_XML, errno, "cvec_new");
+        clixon_err(OE_XML, errno, "cvec_new");
         goto done;
     }
     if ((myprefix = yang_find_myprefix(yn)) == NULL){
-        clicon_err(OE_YANG, ENOENT, "My yang prefix not found");
+        clixon_err(OE_YANG, ENOENT, "My yang prefix not found");
         goto done;
     }
     if ((mynamespace = yang_find_mynamespace(yn)) == NULL){
-        clicon_err(OE_YANG, ENOENT, "My yang namespace not found");
+        clixon_err(OE_YANG, ENOENT, "My yang namespace not found");
         goto done;
     }
     /* Add my prefix and default namespace (from real module) */
@@ -355,20 +365,20 @@ xml_nsctx_yang(yang_stmt *yn,
         goto done;
     /* Find top-most module or sub-module and get prefixes from that */
     if ((ymod = ys_module(yn)) == NULL){
-        clicon_err(OE_YANG, ENOENT, "My yang module not found");
+        clixon_err(OE_YANG, ENOENT, "My yang module not found");
         goto done;
     }
     yspec = yang_parent_get(ymod); /* Assume yspec exists */
 
     /* Iterate over module and register all import prefixes
      */
-    y = NULL;
-    while ((y = yn_each(ymod, y)) != NULL) {
+    inext = 0;
+    while ((y = yn_iter(ymod, &inext)) != NULL) {
         if (yang_keyword_get(y) == Y_IMPORT){
             if ((name = yang_argument_get(y)) == NULL)
                 continue; /* Just skip - shouldnt happen) */
             if ((yp = yang_find(y, Y_PREFIX, NULL)) == NULL)
-                continue; 
+                continue;
             if ((prefix = yang_argument_get(yp)) == NULL)
                 continue;
             if ((ym = yang_find(yspec, Y_MODULE, name)) == NULL)
@@ -394,7 +404,7 @@ xml_nsctx_yang(yang_stmt *yn,
  * Also add netconf base namespace: nc , urn:ietf:params:xml:ns:netconf:base:1.0
  * Fully explore all prefix:namespace pairs of all yang modules
  * @param[in]  yspec  Yang spec
- * @param[out] ncp    XML namespace context
+ * @param[out] ncp    XML namespace context (create if does not exist)
  * @retval     0      OK
  * @retval    -1      Error
  * @code
@@ -415,13 +425,16 @@ xml_nsctx_yangspec(yang_stmt *yspec,
     yang_stmt *ymod = NULL;
     yang_stmt *yprefix;
     yang_stmt *ynamespace;
+    int        inext;
 
-    if ((nc = cvec_new(0)) == NULL){
-        clicon_err(OE_XML, errno, "cvec_new");
+    if (ncp && *ncp)
+        nc = *ncp;
+    else if ((nc = cvec_new(0)) == NULL){
+        clixon_err(OE_XML, errno, "cvec_new");
         goto done;
     }
-    ymod = NULL;
-    while ((ymod = yn_each(yspec, ymod)) != NULL){
+    inext = 0;
+    while ((ymod = yn_iter(yspec, &inext)) != NULL){
         if (yang_keyword_get(ymod) != Y_MODULE)
             continue;
         if ((yprefix = yang_find(ymod, Y_PREFIX, NULL)) == NULL)
@@ -443,6 +456,7 @@ xml_nsctx_yangspec(yang_stmt *yspec,
 }
 
 /*! Print a namespace context to a cbuf using xmlns notation
+ *
  * @param[in]  *cb   CLIgen buf written to
  * @param[in]  *nsc  Namespace context
  * @retval      0    OK
@@ -459,7 +473,7 @@ xml_nsctx_cbuf(cbuf *cb,
 {
     cg_var *cv = NULL;
     char   *prefix;
-    
+
     while ((cv = cvec_each(nsc, cv)) != NULL){
         cprintf(cb, " xmlns");
         if ((prefix = cv_name_get(cv)))
@@ -482,7 +496,7 @@ xml_nsctx_cbuf(cbuf *cb,
  *      err;
  * @endcode
  * @see xmlns_set cache is set
- * @note, this function uses a cache. 
+ * @note, this function uses a cache.
  */
 int
 xml2ns(cxobj *x,
@@ -492,7 +506,7 @@ xml2ns(cxobj *x,
     int    retval = -1;
     char  *ns = NULL;
     cxobj *xp;
-    
+
     if ((ns = nscache_get(x, prefix)) != NULL)
         goto ok;
     if (prefix != NULL) /* xmlns:<prefix>="<uri>" */
@@ -515,7 +529,7 @@ xml2ns(cxobj *x,
         }
     }
     /* Set default namespace cache (since code is at this point,
-     * no cache was found 
+     * no cache was found
      * If not, this is devastating when populating deep yang structures
      */
     if (ns &&
@@ -531,6 +545,7 @@ xml2ns(cxobj *x,
 }
 
 /*! Recursively check prefix / namespaces (and populate ns cache)
+ *
  * @retval     1          OK
  * @retval     0          (Some) prefix not found
  * @retval    -1          Error
@@ -550,9 +565,9 @@ xml2ns_recurse(cxobj *xt)
             if (xml2ns(x, prefix, &namespace) < 0)
                 goto done;
             if (namespace == NULL){
-                clicon_err(OE_XML, ENOENT, "No namespace associated with %s:%s", prefix, xml_name(x));
+                clixon_err(OE_XML, ENOENT, "No namespace associated with %s:%s", prefix, xml_name(x));
                 goto done;
-            }       
+            }
         }
         if (xml2ns_recurse(x) < 0)
             goto done;
@@ -563,6 +578,7 @@ xml2ns_recurse(cxobj *xt)
 }
 
 /*! Add a namespace attribute to an XML node, either default or specific prefix
+ *
  * @param[in]  x          XML tree
  * @param[in]  prefix     prefix/ns localname. If NULL then set default xmlns
  * @param[in]  ns         URI namespace (or NULL). Will be copied
@@ -605,6 +621,8 @@ xmlns_set(cxobj *x,
  * Check if already there
  * @param[in]  x    XML tree
  * @param[in]  nsc  Namespace context
+ * @retval     0    OK
+ * @retval    -1    Error
  * @note you need to do an xml_sort(x) after the call
  */
 int
@@ -636,12 +654,13 @@ xmlns_set_all(cxobj *x,
 }
 
 /*! Get prefix of given namespace recursively 
+ *
  * @param[in]  xn        XML node
  * @param[in]  namespace Namespace
  * @param[out] prefixp   Pointer to prefix if found
- * @retval    -1         Error
- * @retval     0         No namespace found
  * @retval     1         Namespace found, prefix returned in prefixp
+ * @retval     0         No namespace found
+ * @retval    -1         Error
  * @note a namespace can have two or more prefixes, this just returns the first
  * @see xml2prefixexists to check a specific pair
  */
@@ -660,9 +679,9 @@ xml2prefix(cxobj *xn,
     if (nscache_get_prefix(xn, namespace, &prefix) == 1) /* found */
         goto found;
     xa = NULL;
-    while ((xa = xml_child_each(xn, xa, CX_ATTR)) != NULL) {
+    while ((xa = xml_child_each_attr(xn, xa)) != NULL) {
         /* xmlns=namespace */
-        if (strcmp("xmlns", xml_name(xa)) == 0){ 
+        if (strcmp("xmlns", xml_name(xa)) == 0){
             if (strcmp(xml_value(xa), namespace) == 0){
                 if (nscache_set(xn, NULL, namespace) < 0)
                     goto done;
@@ -672,7 +691,7 @@ xml2prefix(cxobj *xn,
         }
         /* xmlns:prefix=namespace */
         else if ((xaprefix=xml_prefix(xa)) != NULL &&
-                 strcmp("xmlns", xaprefix) == 0){ 
+                 strcmp("xmlns", xaprefix) == 0){
             if (strcmp(xml_value(xa), namespace) == 0){
                 prefix = xml_name(xa);
                 if (nscache_set(xn, prefix, namespace) < 0)
@@ -700,12 +719,14 @@ xml2prefix(cxobj *xn,
     goto done;
 }
 
-
 /*! Add prefix:namespace pair to xml node, set cache, etc
+ *
  * @param[in]  x         XML node whose namespace should change
  * @param[in]  xp        XML node where namespace attribute should be declared (can be same)
  * @param[in]  prefix1   Use this prefix
  * @param[in]  namespace Use this namespace
+ * @retval     0         OK
+ * @retval    -1         Error
  * @note x and xp must be different if x is an attribute and may be different otherwise
  */
 int
@@ -716,7 +737,7 @@ xml_add_namespace(cxobj *x,
 {
     int    retval = -1;
     cxobj *xa = NULL;
-    
+
     /* Add binding to x1p. We add to parent due to heurestics, so we dont
      * end up in adding it to large number of siblings 
      */

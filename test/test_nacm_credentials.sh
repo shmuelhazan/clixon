@@ -10,9 +10,6 @@
 # Magic line must be first in script (see README.md)
 s="$_" ; . ./lib.sh || if [ "$s" = $0 ]; then exit 0; else return 0; fi
 
-# Raw unit tester of backend unix socket.
-: ${clixon_util_socket:=$(which clixon_util_socket)}
-
 APPNAME=example
 
 # Common NACM scripts
@@ -20,6 +17,8 @@ APPNAME=example
 
 cfg=$dir/conf_yang.xml
 fyang=$dir/nacm-example.yang
+
+NACMUSER=$(whoami)
 
 cat <<EOF > $fyang
 module nacm-example{
@@ -116,7 +115,7 @@ cat <<EOF > $cfg
   <CLICON_SOCK_FAMILY>$family</CLICON_SOCK_FAMILY>
   <CLICON_SOCK>$sock</CLICON_SOCK>
   <CLICON_BACKEND_DIR>/usr/local/lib/$APPNAME/backend</CLICON_BACKEND_DIR>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>/usr/local/var/$APPNAME</CLICON_XMLDB_DIR>
   <CLICON_NACM_MODE>internal</CLICON_NACM_MODE>
   <CLICON_NACM_DISABLED_ON_EMPTY>true</CLICON_NACM_DISABLED_ON_EMPTY>
@@ -185,13 +184,13 @@ testrun except "" UNIX $dir/backend.sock "$OK" ""
 
 # UNIX socket, myuser, loop mode. All should work
 new "Credentials: mode=none, fam=UNIX user=me"
-testrun none "$USER" UNIX $dir/backend.sock "$OK" ""
+testrun none "$NACMUSER" UNIX $dir/backend.sock "$OK" ""
 
 new "Credentials: mode=exact, fam=UNIX user=me"
-testrun exact "$USER" UNIX $dir/backend.sock "$OK" ""
+testrun exact "$NACMUSER" UNIX $dir/backend.sock "$OK" ""
 
 new "Credentials: mode=except, fam=UNIX user=me"
-testrun except "$USER" UNIX $dir/backend.sock "$OK" ""
+testrun except "$NACMUSER" UNIX $dir/backend.sock "$OK" ""
 
 # UNIX socket, admin user. First should work
 new "Credentials: mode=none, fam=UNIX user=admin"
@@ -215,18 +214,17 @@ testrun except admin UNIX $dir/backend.sock "$OK" sudo
 
 # IPv4 socket, admin user. First should work
 new "Credentials: mode=none, fam=UNIX user=admin sudo"
-testrun none $USER IPv4 127.0.0.1 "$OK" ""
+testrun none $NACMUSER IPv4 127.0.0.1 "$OK" ""
 
 new "Credentials: mode=exact, fam=UNIX user=admin sudo"
-testrun exact $USER IPv4 127.0.0.1 "$ERROR" ""
+testrun exact $NACMUSER IPv4 127.0.0.1 "$ERROR" ""
 
 new "Credentials: mode=except, fam=UNIX user=admin sudo"
-testrun except $USER IPv4 127.0.0.1 "$ERROR" ""
+testrun except $NACMUSER IPv4 127.0.0.1 "$ERROR" ""
 
 rm -rf $dir
 
-# unset conditional parameters 
-unset clixon_util_socket
+unset NACMUSER
 
 new "endtest"
 endtest

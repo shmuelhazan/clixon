@@ -74,7 +74,7 @@ Run the Clixon main example, in the [example](../example) directory or [examples
 
 ## Hello world?
 
-One of the examples is [a hello world example](https://github.com/clicon/clixon-examples/hello). Please start with that.
+One of the examples is [a hello world example](https://github.com/clicon/clixon-examples/tree/master/hello). Please start with that.
 
 ## How do you build and install Clixon?
 Clixon: 
@@ -93,10 +93,10 @@ The main example:
 
 ## How do I run Clixon example commands?
 
-- Start a backend server: `sudo clixon_backend -s init -f /usr/local/etc/example.xml`
-- Start a cli session: `clixon_cli -f /usr/local/etc/example.xml`
-- Start a netconf session: `clixon_netconf -f /usr/local/etc/example.xml`
-- Start a restconf daemon: `sudo su -c "/www-data/clixon_restconf -f /usr/local/etc/example.xml " -s /bin/sh www-data`
+- Start a backend server: `sudo clixon_backend -s init -f /usr/local/etc/clixon/example.xml`
+- Start a cli session: `clixon_cli -f /usr/local/etc/clixon/example.xml`
+- Start a netconf session: `clixon_netconf -f /usr/local/etc/clixon/example.xml`
+- Start a restconf daemon: `sudo su -c "/www-data/clixon_restconf -f /usr/local/etc/clixon/example.xml " -s /bin/sh www-data`
 - Send a restconf command: `curl -X GET http://127.0.0.1/restconf/data`
 
 More info in the [example](../example) directory.
@@ -111,13 +111,13 @@ Add yourself and www-data, if you intend to use restconf.
 Using useradd and usermod:
 ```
   sudo useradd clicon # 
-  sudo usermod -a -G clicon <user>
+  sudo usermod -a -G clicon $(whoami)
   sudo usermod -a -G clicon www-data
 ```
 Using adduser (eg on busybox):
 ```
   sudo adduser -D -H clicon
-  sudo adduser <user> clicon
+  sudo adduser $(whoami) clicon
 ```
 (you may have to restart shell)
 
@@ -131,7 +131,7 @@ clicon:x:1001:<user>,www-data
 
 The easiest way to use Clixon is via the CLI. In the main example, once the backend is started you can start the auto-cli. Example:
 ```
-clixon_cli -f /usr/local/etc/example.xml 
+clixon_cli -f /usr/local/etc/clixon/example.xml
 cli> set interfaces interface eth9 ?
  description               enabled                   ipv4                     
  ipv6                      link-up-down-trap-enable  type                     
@@ -154,7 +154,7 @@ cli> delete interfaces interface eth9
 As an alternative to cli configuration, you can use netconf. Easiest is to just pipe netconf commands to the clixon_netconf application.
 Example:
 ```
-clixon_netconf -qf /usr/local/etc/example.xml
+clixon_netconf -qf /usr/local/etc/clixon/example.xml
 <rpc><get-config><source><candidate/></source></get-config></rpc>]]>]]>
 <rpc-reply><data><interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces"><interface><name>eth9</name><type>ex:eth</type><enabled>true</enabled></interface></interfaces></data></rpc-reply>]]>]]>
 ```
@@ -162,7 +162,7 @@ clixon_netconf -qf /usr/local/etc/example.xml
 However, more useful is to run clixon_netconf as an SSH
 subsystem. Register the subsystem in /etc/sshd_config:
 ```
-        Subsystem netconf /usr/local/bin/clixon_netconf -f /usr/local/etc/example.xml
+        Subsystem netconf /usr/local/bin/clixon_netconf -f /usr/local/etc/clixon/example.xml
 ```
 and then invoke it from a client using
 ```
@@ -193,7 +193,7 @@ sudo /etc/init.d/nginx start
 ```
 Start the clixon restconf daemon
 ```
-sudo su -c "/www-data/clixon_restconf -f /usr/local/etc/example.xml " -s /bin/sh www-data
+sudo su -c "/www-data/clixon_restconf -f /usr/local/etc/clixon/example.xml " -s /bin/sh www-data
 ```
 
 Then access:
@@ -271,7 +271,7 @@ Backend   Plugin1    Plugin2
 
 Clixon options are stored in an XML configuration file. The default
 configuration file is /usr/local/etc/clixon.xml. The example
-configuration file is installed at /usr/local/etc/example.xml. The
+configuration file is installed at /usr/local/etc/clixon/example.xml. The
 YANG specification for the configuration file is clixon-config.yang.
 
 See the [example config file](../example/main/example.xml).
@@ -289,7 +289,7 @@ Clixon by default finds its configuration file at `/usr/local/etc/clixon.xml`. H
 
 Yes, when you start a clixon program, you can supply the `-o` option to modify the configuration specified in the configuration file. Options that are leafs are overriden, whereas options that are leaf-lists are added to.
 
-Example, add the "usr/local/share/ietf" directory to the list of directories where yang files are searched for:
+Example, add the "/usr/local/share/ietf" directory to the list of directories where yang files are searched for:
 ```
   clixon_cli -o CLICON_YANG_DIR=/usr/local/share/ietf
 ```
@@ -328,7 +328,7 @@ Some clixon tests rely on standard IETF YANG modules which you need to download.
 
 To download the yang models required for some tests:
 ```
-   cd /usr/local/share/yang
+   cd /usr/local/share/
    git clone https://github.com/YangModels/yang
 ```
 
@@ -394,7 +394,7 @@ severity major;
 ```
 or via NETCONF:
 ```
-clixon_netconf -qf /usr/local/etc/example.xml 
+clixon_netconf -qf /usr/local/etc/clixon/example.xml
 <rpc><create-subscription xmlns="urn:ietf:params:xml:ns:netmod:notification"><stream>EXAMPLE</stream></create-subscription></rpc>]]>]]>
 <rpc-reply><ok/></rpc-reply>]]>]]>
 <notification xmlns="urn:ietf:params:xml:ns:netconf:notification:1.0"><eventTime>2018-09-30T12:44:59.657276</eventTime><event xmlns="http://example.com/event/1.0"><event-class>fault</event-class><reportingEntity><card>Ethernet0</card></reportingEntity><severity>major</severity></event></notification>]]>]]>
@@ -473,7 +473,7 @@ Each plugin is initiated with an API struct followed by a plugin init function a
       ... /* more functions here */
    }
    clixon_plugin_api *
-   clixon_plugin_init(clicon_handle h)
+   clixon_plugin_init(clixon_handle h)
    {
       ...
       return &api; /* Return NULL on error */
@@ -489,7 +489,7 @@ information on added, deleted and changed entries. You access this
 information using access functions as defined in clixon_backend_transaction.h
 
 ## How do I check what has changed on commit?
-You use XPATHs on the XML trees in the transaction commit callback.
+You use XPaths on the XML trees in the transaction commit callback.
 Suppose you want to print all added interfaces:
 ```
         cxobj *target = transaction_target(td); # wanted XML tree
@@ -500,7 +500,7 @@ Suppose you want to print all added interfaces:
 You can look for added, deleted and changed entries in this way.
 
 ## How do I access the XML tree?
-Using XPATH, find and iteration functions defined in the XML library. Example library functions:
+Using XPath, find and iteration functions defined in the XML library. Example library functions:
 ```
       xml_child_each(), 
       xml_find(), 
@@ -515,7 +515,7 @@ More are found in the doxygen reference.
 1. You add an entry in example_cli.cli
 >   example("This is a comment") <var:int32>("This is a variable"), mycallback("myarg");
 2. Then define a function in example_cli.c
->   mycallback(clicon_handle h, cvec *cvv, cvec *arv)
+>   mycallback(clixon_handle h, cvec *cvv, cvec *arv)
 where 'cvv' contains the value of the variable 'var' and 'argv' contains the string "myarg".
 
 The 'cvv' datatype is a 'CLIgen variable vector'.
@@ -523,9 +523,9 @@ They are documented in [CLIgen tutorial](https://github.com/clicon/cligen/blob/m
 
 ## How do I write a validation function?
 Similar to a commit function, but instead write the transaction_validate() function.
-Check for inconsistencies in the XML trees and if they fail, make an clicon_err() call.
+Check for inconsistencies in the XML trees and if they fail, make an clixon_err() call.
 ```
-    clicon_err(OE_PLUGIN, 0, "Route %s lacks ipv4 addr", name);
+    clixon_err(OE_PLUGIN, 0, "Route %s lacks ipv4 addr", name);
     return -1;
 ```
 The validation or commit will then be aborted.
@@ -560,7 +560,7 @@ implement the RFC, you need to register an RPC callback in the backend plugin:
 Example:
 ```
 int
-clixon_plugin_init(clicon_handle h)
+clixon_plugin_init(clixon_handle h)
 {
 ...
    rpc_callback_register(h, example_rpc, NULL, "urn:example:my", "example-rpc");
@@ -570,7 +570,7 @@ clixon_plugin_init(clicon_handle h)
 And then define the callback itself:
 ```
 static int 
-example_rpc(clicon_handle h,            /* Clicon handle */
+example_rpc(clixon_handle h,            /* Clicon handle */
             cxobj        *xe,           /* Request: <rpc><xn></rpc> */
             cbuf         *cbret,        /* Reply eg <rpc-reply>... */
             void         *arg,          /* Client session */
@@ -592,7 +592,7 @@ The following example shows how `my_copy` can be called right after the system (
 the original operation:
 ```
 static int 
-my_copy(clicon_handle h,            /* Clicon handle */
+my_copy(clixon_handle h,            /* Clicon handle */
         cxobj        *xe,           /* Request: <rpc><xn></rpc> */
         cbuf         *cbret,        /* Reply eg <rpc-reply>... */
         void         *arg,          /* Client session */
@@ -602,7 +602,7 @@ my_copy(clicon_handle h,            /* Clicon handle */
     return 0;
 }
 int
-clixon_plugin_init(clicon_handle h)
+clixon_plugin_init(clixon_handle h)
 {
 ...
    rpc_callback_register(h, my_copy, NULL, "urn:ietf:params:xml:ns:netconf:base:1.0", "copy-config");
@@ -616,7 +616,7 @@ A restconf call may need to be authenticated.
 You can specify an authentication callback for restconf as follows:
 ```
 int
-plugin_credentials(clicon_handle h,     
+plugin_credentials(clixon_handle h,     
                    void         *arg)
 {
     FCGX_Request *r = (FCGX_Request *)arg;

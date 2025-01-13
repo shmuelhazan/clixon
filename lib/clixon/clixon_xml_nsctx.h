@@ -50,7 +50,7 @@
 /*
  * Prototypes
  */
-int     xml_nsctx_namespace_netconf_default(clicon_handle h);
+int     xml_nsctx_namespace_netconf_default(clixon_handle h);
 cvec   *xml_nsctx_init(char *prefix, char *ns);
 int     xml_nsctx_free(cvec *nsc);
 char   *xml_nsctx_get(cvec *nsc, char *prefix);
@@ -60,8 +60,7 @@ int     xml_nsctx_node(cxobj *x, cvec **ncp);
 int     xml_nsctx_yang(yang_stmt *yn, cvec **ncp);
 int     xml_nsctx_yangspec(yang_stmt *yspec, cvec **ncp);
 int     xml_nsctx_cbuf(cbuf *cb, cvec *nsc);
-
-int     xml2ns(cxobj *x, char *localname, char **ns);
+int     xml2ns(cxobj *x, char *prefix, char **ns);
 int     xml2ns_recurse(cxobj *x);
 int     xmlns_set(cxobj *x, char *prefix, char *ns);
 int     xmlns_set_all(cxobj *x, cvec  *nsc);

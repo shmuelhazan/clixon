@@ -47,29 +47,33 @@
 /* cligen */
 #include <cligen/cligen.h>
 
-/* clicon */
-#include "clixon_log.h"
-#include "clixon_err.h"
+/* clixon */
 #include "clixon_queue.h"
 #include "clixon_hash.h"
 #include "clixon_handle.h"
 #include "clixon_yang.h"
+#include "clixon_xml.h"
+#include "clixon_log.h"
+#include "clixon_debug.h"
+#include "clixon_err.h"
 #include "clixon_yang_sub_parse.h"
 #include "clixon_yang_schemanode_parse.h"
 
 /*! Invoke yang sub-parser on string
  *
- * @param[in]  str           yang string
- * @param[in]  ys            Yang statement
- * @param[in]  accept        Sub-parse rule to accept
- * @param[in]  mainfile      Name of main parse file
- * @param[in]  linenum       Line number context in mainfile (assume parse module of ys)
- * @param[out] enabled       0: Disabled, 1: Enabled (if present)
- * @retval     0             OK
- * @retval    -1             Error
+ * @param[in]  h         Clixon handle (can be NULL)
+ * @param[in]  str       Yang string
+ * @param[in]  ys        Yang statement
+ * @param[in]  accept    Sub-parse rule to accept
+ * @param[in]  mainfile  Name of main parse file
+ * @param[in]  linenum   Line number context in mainfile (assume parse module of ys)
+ * @param[out] enabled   0: Disabled, 1: Enabled (if present)
+ * @retval     0         OK
+ * @retval    -1         Error
  */
 int
-yang_subparse(char                      *str,
+yang_subparse(clixon_handle              h,
+              char                      *str,
               yang_stmt                 *ys,
               enum yang_sub_parse_accept accept,
               const char                *mainfile,
@@ -79,24 +83,26 @@ yang_subparse(char                      *str,
     int                    retval = -1;
     clixon_yang_sub_parse_yacc ife = {0,};
 
-    clicon_debug(CLIXON_DBG_DETAIL, "%s %s", __FUNCTION__, str);
+    clixon_debug(CLIXON_DBG_PARSE, "%s", str);
     ife.if_parse_string = str;
     ife.if_linenum = linenum;
     if (enabled)
         ife.if_ys = ys; /* Used as trigger to check if enabled */
     ife.if_accept = accept;
     ife.if_mainfile = mainfile;
+    ife.if_h = h;
     if (clixon_yang_sub_parsel_init(&ife) < 0)
         goto done;
     if (clixon_yang_sub_parseparse(&ife) != 0) { /* yacc returns 1 on error */
-        if (clicon_errno == 0)
-            clicon_err(OE_YANG, 0, "If-feature parser error with no error code (should not happen)");
+        if (clixon_err_category() == 0)
+            clixon_err(OE_YANG, 0, "If-feature parser error with no error code (should not happen)");
         goto done;
     }
     if (enabled)
         *enabled = ife.if_enabled;
     retval = 0;
  done:
+    clixon_debug(CLIXON_DBG_PARSE, "retval:%d", retval);
     clixon_yang_sub_parsel_exit(&ife);
     return retval;
 }
@@ -120,7 +126,7 @@ yang_schema_nodeid_subparse(char                      *str,
     int                         retval = -1;
     clixon_yang_schemanode_yacc ife = {0,};
 
-    clicon_debug(CLIXON_DBG_DETAIL, "%s %s", __FUNCTION__, str);
+    clixon_debug(CLIXON_DBG_PARSE, "%s", str);
     ife.if_parse_string = str;
     ife.if_linenum = linenum;
     ife.if_mainfile = mainfile;
@@ -128,12 +134,13 @@ yang_schema_nodeid_subparse(char                      *str,
     if (clixon_yang_schemanode_parsel_init(&ife) < 0)
         goto done;
     if (clixon_yang_schemanode_parseparse(&ife) != 0) { /* yacc returns 1 on error */
-        if (clicon_errno == 0)
-            clicon_err(OE_YANG, 0, "descendant-schema-nodeid parser error with no error code (should not happen)");
+        if (clixon_err_category() == 0)
+            clixon_err(OE_YANG, 0, "descendant-schema-nodeid parser error with no error code (should not happen)");
         goto done;
     }
     retval = 0;
  done:
+    clixon_debug(CLIXON_DBG_PARSE, "retval:%d", retval);
     clixon_yang_schemanode_parsel_exit(&ife);
     return retval;
 }

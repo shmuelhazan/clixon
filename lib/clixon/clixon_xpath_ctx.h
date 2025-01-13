@@ -33,8 +33,8 @@
 
   ***** END LICENSE BLOCK *****
 
- * Clixon XML XPATH 1.0 according to https://www.w3.org/TR/xpath-10
- * This file defines XPATH contexts using in traversing the XPATH parse tree.
+ * Clixon XML XPath 1.0 according to https://www.w3.org/TR/xpath-10
+ * This file defines XPath contexts using in traversing the XPath parse tree.
  */
 #ifndef _CLIXON_XPATH_CTX_H
 #define _CLIXON_XPATH_CTX_H
@@ -43,7 +43,8 @@
  * Types
  */
 
-/*! XPATH expression type
+/*! XPath expression type
+ *
  * An expression is evaluated to yield an object, which has one of the following four basic types:
  *  node-set (an unordered collection of nodes without duplicates)
  *  boolean (true or false)
@@ -57,7 +58,9 @@ enum xp_objtype{
     XT_STRING
 };
 
-/* Expression evaluation occurs with respect to a context. XSLT and XPointer specify how the 
+/*! XPath context and result
+ *
+ * Expression evaluation occurs with respect to a context. XSLT and XPointer specify how the
  * context is determined for XPath expressions used in XSLT and XPointer respectively. The 
  * context consists of:
  *  a node (the context node)

@@ -28,7 +28,7 @@ linuxrelease()
 {
     box=$1
     release="unknown"
-    for r in freebsd openbsd opensuse ubuntu centos coreos alpine debian arch gentoo fedora rhel; do
+    for r in freebsd dragonfly openbsd opensuse ubuntu centos coreos alpine debian arch gentoo fedora rhel; do
         # -i ignore case
         if [ -n "$(echo "$box" | grep -io "$r")" ]; then        
             release=$r
@@ -128,8 +128,9 @@ case $release in
                 ;;
         esac
     ;;
-    freebsd)
+    freebsd | dragonfly)
         # packages for building
+        $sshcmd sudo pkg upgrade -y
         $sshcmd sudo pkg install -y git gmake bash
         # cligen
         $sshcmd sudo pkg install -y bison flex
@@ -144,6 +145,7 @@ case $release in
             native)
                 ;;
         esac
+        $sshcmd sudo pkg install -y coreutils # gnustat
         ;;
     centos)
         # enable ipv6
@@ -270,6 +272,7 @@ case ${with_restconf} in
         . ./nginx.sh $dir $idfile $port $wwwuser
         ;;
     native)
+        $sshcmd sudo pkill nginx | true
         ;;
 esac
 
@@ -278,7 +281,17 @@ $scpcmd ./clixon.sh vagrant@127.0.0.1:
 $sshcmd ./clixon.sh $release $wwwuser ${with_restconf}
 
 # Tests require yangmodels and openconfig
-cat<<EOF > $dir/yangmodels.sh
+if [ -d /usr/local/share/yang/standard ]; then
+    $scpcmd -r /usr/local/share/yang/standard/ vagrant@127.0.0.1:
+
+    cat<<EOF > $dir/yangmodels.sh
+set -eux
+rm -rf /usr/local/share/yang
+mkdir /usr/local/share/yang
+mv standard /usr/local/share/yang/
+EOF
+else
+    cat<<EOF > $dir/yangmodels.sh
 set -eux
 cd /usr/local/share
 rm -rf yang
@@ -294,6 +307,22 @@ git pull origin main
 # Patch yang syntax errors
 sed  s/=\ olt\'/=\ \'olt\'/g /usr/local/share/yang/standard/ieee/published/802.3/ieee802-ethernet-pon.yang > ieee802-ethernet-pon2.yang
 mv ieee802-ethernet-pon2.yang /usr/local/share/yang/standard/ieee/published/802.3/ieee802-ethernet-pon.yang
+EOF
+fi
+chmod 755 $dir/yangmodels.sh
+$scpcmd $dir/yangmodels.sh vagrant@127.0.0.1:
+$sshcmd sudo ./yangmodels.sh
+
+if [ -d /usr/local/share/openconfig ]; then
+    $scpcmd -r /usr/local/share/openconfig vagrant@127.0.0.1:
+    cat<<EOF > $dir/openconfig.sh
+set -eux
+rm -rf /usr/local/share/openconfig
+mkdir /usr/local/share/openconfig
+mv openconfig /usr/local/share/
+EOF
+else
+    cat<<EOF > $dir/openconfig.sh
 # openconfig
 cd /usr/local/share
 rm -rf openconfig
@@ -301,14 +330,14 @@ mkdir openconfig
 cd openconfig
 git clone https://github.com/openconfig/public
 EOF
-chmod 755 $dir/yangmodels.sh
-$scpcmd $dir/yangmodels.sh vagrant@127.0.0.1:
-$sshcmd sudo ./yangmodels.sh
-
+fi
+chmod 755 $dir/openconfig.sh
+$scpcmd $dir/openconfig.sh vagrant@127.0.0.1:
+$sshcmd sudo ./openconfig.sh
 
 # Run tests
 $sshcmd "(cd src/cligen/test; ./sum.sh)"
-$sshcmd "(cd src/clixon/test; detail=true ./sum.sh)"
+$sshcmd "(cd src/clixon/test; bash -c 'detail=true ./sum.sh')"
 
 # destroy vm
 #if $destroy; then

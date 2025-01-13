@@ -33,7 +33,7 @@ cat <<EOF > $cfg
   <CLICON_YANG_DIR>${MIB_GENERATED_YANG_DIR}</CLICON_YANG_DIR>
   <CLICON_YANG_MAIN_FILE>$fyang</CLICON_YANG_MAIN_FILE>
   <CLICON_SOCK>$dir/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/var/tmp/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_BACKEND_DIR>/usr/local/lib/$APPNAME/backend</CLICON_BACKEND_DIR>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_SNMP_AGENT_SOCK>unix:$SOCK</CLICON_SNMP_AGENT_SOCK>
@@ -133,14 +133,14 @@ function testinit(){
 
     new "wait backend"
     wait_backend
-        
+
     if [ $SN -ne 0 ]; then
         # Kill old clixon_snmp, if any
         new "Terminating any old clixon_snmp processes"
         sudo killall -q clixon_snmp
 
         new "Starting clixon_snmp"
-        start_snmp $cfg &
+        start_snmp $cfg
     fi
 
     new "wait snmp"
@@ -154,7 +154,8 @@ function testinit(){
 # 3: value   SNMP value
 # 4: value2   SNMP value2 (as shown "after" snmpset)
 # 5: xvalue  XML/Clixon value
-# 6: OID
+# 6: OID in 
+# 7: OID out
 function testrun()
 {
     name=$1
@@ -162,7 +163,8 @@ function testrun()
     value=$3
     value2=$4
     xvalue=$5
-    oid=$6
+    oid_in=$6
+    oid_out=$7
 
     # Type from man snmpset 
     case $type in
@@ -172,7 +174,7 @@ function testrun()
         "STRING")
             set_type="s"
             ;;
-        "HEX STRING")
+        "Hex-STRING")
             set_type="x"
             ;;
         "TIMETICKS")
@@ -193,23 +195,28 @@ function testrun()
     esac
 
     new "Set $name via SNMP"
-    if [ $type == "STRING" ]; then
-        echo "$snmpset $oid $set_type $value"
-        expectpart "$($snmpset $oid $set_type $value)" 0 "$type:" "$value"
+    if [ "$type" == "STRING" ]; then
+        echo "$snmpset $oid_in $set_type $value"
+        expectpart "$($snmpset $oid_in $set_type $value)" 0 "$type:" "$value"
+    elif [ "$type" == "Hex-STRING" ]; then
+        echo "$snmpset $oid_in $set_type \"$value\""
+        expectpart "$($snmpset $oid_in $set_type "$value")" 0 "$type:" ""$value""
     else
-        echo "$snmpset $oid $set_type $value2"
-        expectpart "$($snmpset $oid $set_type $value)" 0 "$type: $value2"
+        echo "$snmpset $oid_in $set_type $value2"
+        expectpart "$($snmpset $oid_in $set_type $value)" 0 "$type: $value2" 
     fi
 
     new "Check $name via SNMP"
     if [ "$type" == "STRING" ]; then
-        expectpart "$($snmpget $oid)" 0 "$type:" "$value"
+        expectpart "$($snmpget $oid_out)" 0 "$type:" "$value"
+    elif [ "$type" == "Hex-STRING" ]; then
+        expectpart "$($snmpget $oid_out)" 0 "$type:" ""$value""
     else
-        expectpart "$($snmpget $oid)" 0 "$type: $value2"
+        expectpart "$($snmpget $oid_out)" 0 "$type: $value2"
     fi
 
     new "Check $name via CLI"
-    expectpart "$($clixon_cli -1 -f $cfg show config xml)" 0 "<$name>$xvalue</$name>"    
+    expectpart "$($clixon_cli -1 -f $cfg show config)" 0 "<$name>$xvalue</$name>"
 }
 
 function testexit(){
@@ -234,11 +241,12 @@ MIB=".1.3.6.1.4.1.8072.200"
 IFMIB=".1.3.6.1.2.1"
 ENTMIB=".1.3.6.1.2.1.47.1.1.1"
 
-testrun clixonExampleInteger INTEGER 1234 1234 1234 ${MIB}.1.1
-testrun clixonExampleSleeper INTEGER -1 -1 -1 ${MIB}.1.2
-testrun clixonExampleString STRING foobar foobar foobar ${MIB}.1.3
-testrun ifPromiscuousMode INTEGER 1 1 true ${MIB}.1.10 # boolean
-testrun ifIpAddr IPADDRESS 1.2.3.4 1.2.3.4 1.2.3.4 ${MIB}.1.13 # InetAddress
+testrun clixonExampleInteger INTEGER 1234 1234 1234 ${MIB}.1.1.0 ${MIB}.1.1.0
+testrun clixonExampleSleeper INTEGER -1 -1 -1 ${MIB}.1.2.0 ${MIB}.1.2.0
+testrun clixonExampleString STRING foobar foobar foobar ${MIB}.1.3.0 ${MIB}.1.3.0
+testrun ifPromiscuousMode INTEGER 1 1 true ${MIB}.1.10.0  ${MIB}.1.10.0 # boolean
+testrun ifIpAddr IPADDRESS 1.2.3.4 1.2.3.4 1.2.3.4 ${MIB}.1.13.0  ${MIB}.1.13.0 # InetAddress
+testrun bitTest "Hex-STRING" "00 20 00 00 00" "00 20 00 00 00" "bit10" ${MIB}.1.14.0  ${MIB}.1.14.0 # bitTest
 # XXX It was supposed to test writing hardware address type, but it is also read-only
 #testrun ifPhysAddress STRING ff:ee:dd:cc:bb:aa ff:ee:dd:cc:bb:aa ff:ee:dd:cc:bb:aa ${IFMIB}.2.2.1.6.1
 
@@ -254,7 +262,7 @@ new "Check $name via SNMP"
 expectpart "$($snmpget $oid)" 0 "$type: active(1)"
 
 new "Check $name via CLI"
-expectpart "$($clixon_cli -1 -f $cfg show config xml)" 0 "<$name>active</$name>"    
+expectpart "$($clixon_cli -1 -f $cfg show config)" 0 "<$name>active</$name>"
 
 # restart backend with synthetic validation failure
 # Incomplete commit failed test: the commit fails by logging but this is not actually checked
@@ -267,8 +275,10 @@ if [ $BE -ne 0 ]; then
     fi
     
     sudo pkill -f clixon_backend
-    
-    new "Starting backend"
+fi
+
+if [ $BE -ne 0 ]; then
+    new "Starting backend -s startup -f $cfg -- -V CLIXON-TYPES-MIB/clixonExampleScalars/clixonExampleInteger"
     start_backend -s startup -f $cfg -- -V CLIXON-TYPES-MIB/clixonExampleScalars/clixonExampleInteger
 fi
 
@@ -276,7 +286,7 @@ new "wait backend"
 wait_backend
 
 new "set value with error"
-expectpart "$($snmpset ${MIB}.1.1  i 4321 2>&1)" 2 "commitFailed"
+expectpart "$($snmpset ${MIB}.1.1.0  i 4321 2>&1)" 2 "commitFailed"
 
 new "Cleaning up"
 testexit

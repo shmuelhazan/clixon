@@ -35,7 +35,6 @@
 
  */
 
-
 #ifndef _CLIXON_HANDLE_H_
 #define _CLIXON_HANDLE_H_
 
@@ -47,7 +46,6 @@
    cli/backend/netconf or other plugin. But this is hidden under-the-hood.
 */
 typedef void *clixon_handle;
-typedef void *clicon_handle;
 
 /* The dynamicically loadable plugin object handle (should be in clixon_plugin.h) */
 typedef void *plghndl_t;
@@ -60,37 +58,37 @@ typedef void *plghndl_t;
  */
 typedef int (clicon_output_cb)(
    FILE *f,
-   const char *templ, ... 
+   const char *templ, ...
 ) __attribute__ ((format (printf, 2, 3)));
 
 /*
  * Prototypes
  */
 /* Basic CLICON init functions returning a handle for API access. */
-clicon_handle clicon_handle_init(void);
+clixon_handle clixon_handle_init(void);
 
 /* Internal call to allocate a CLICON handle. */
-clicon_handle clicon_handle_init0(int size);
+clixon_handle clixon_handle_init0(int size);
 
 /* Deallocate handle */
-int clicon_handle_exit(clicon_handle h);
+int clixon_handle_exit(clixon_handle h);
 
 /* Check struct magic number for sanity checks */
-int clicon_handle_check(clicon_handle h);
+int clixon_handle_check(clixon_handle h);
 
 /* Return clicon options (hash-array) given a handle.*/
-clicon_hash_t *clicon_options(clicon_handle h);
+clicon_hash_t *clicon_options(clixon_handle h);
 
 /* Return internal clicon data (hash-array) given a handle.*/
-clicon_hash_t *clicon_data(clicon_handle h);
+clicon_hash_t *clicon_data(clixon_handle h);
 
 /* Return internal clicon db_elmnt (hash-array) given a handle.*/
-clicon_hash_t *clicon_db_elmnt(clicon_handle h);
+clicon_hash_t *clicon_db_elmnt(clixon_handle h);
 
 /* Return internal stream hash-array given a handle.*/
-struct event_stream *clicon_stream(clicon_handle h);
+struct event_stream *clicon_stream(clixon_handle h);
 struct event_stream;
-int clicon_stream_set(clicon_handle h, struct event_stream *es);
-int clicon_stream_append(clicon_handle h, struct event_stream *es);
+int clicon_stream_set(clixon_handle h, struct event_stream *es);
+int clicon_stream_append(clixon_handle h, struct event_stream *es);
 
 #endif  /* _CLIXON_HANDLE_H_ */

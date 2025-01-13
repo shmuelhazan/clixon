@@ -67,6 +67,9 @@ EOF
 
 # Define default restconfig config: RESTCONFIG
 RESTCONFIG=$(restconf_config none false)
+if [ $? -ne 0 ]; then
+    err1 "Error when generating certs"
+fi
 
 cat <<EOF > $cfg
 <clixon-config xmlns="http://clicon.org/config">
@@ -76,14 +79,14 @@ cat <<EOF > $cfg
   <CLICON_YANG_DIR>$dir</CLICON_YANG_DIR>
   <CLICON_YANG_DIR>${YANG_INSTALLDIR}</CLICON_YANG_DIR>
   <CLICON_YANG_MAIN_FILE>$fyang</CLICON_YANG_MAIN_FILE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/example/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_XMLDB_PRETTY>false</CLICON_XMLDB_PRETTY>
   <CLICON_XMLDB_FORMAT>$format</CLICON_XMLDB_FORMAT>
   <CLICON_CLI_MODE>example</CLICON_CLI_MODE>
-  <CLICON_CLI_DIR>/usr/local/lib/example/cli</CLICON_CLI_DIR>
-  <CLICON_CLISPEC_DIR>/usr/local/lib/example/clispec</CLICON_CLISPEC_DIR>
+  <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
+  <CLICON_CLISPEC_DIR>/usr/local/lib/$APPNAME/clispec</CLICON_CLISPEC_DIR>
   <CLICON_CLI_LINESCROLLING>0</CLICON_CLI_LINESCROLLING>
   <CLICON_LOG_STRING_LIMIT>128</CLICON_LOG_STRING_LIMIT>
   <CLICON_RESTCONF_HTTP2_PLAIN>true</CLICON_RESTCONF_HTTP2_PLAIN>
@@ -209,22 +212,7 @@ done
 echo -n "</x>" >> $fdataxml2 # No CR
 
 new "restconf replace large list-leaf config"
-expectpart "$(time -p curl $CURLOPTS -X PUT -H "Content-Type: application/yang-data+xml" $RCPROTO://localhost/restconf/data/scaling:x -d @$fdataxml2)" 0 "HTTP/$HVER 20"
-
-new "netconf add $perfreq small leaf-list config"
-{ time -p for (( i=0; i<$perfreq; i++ )); do
-    rnd=$(( ( RANDOM % $perfnr ) ))
-    echo "$DEFAULTHELLO<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><x xmlns=\"urn:example:clixon\"><c>$rnd</c></x></config></edit-config></rpc>]]>]]>"
-done | $clixon_netconf -qef $cfg > /dev/null; } 2>&1 | awk '/real/ {print $2}'
-
-new "netconf add small leaf-list config"
-expecteof "time -p $clixon_netconf -qef $cfg" 0 "$DEFAULTHELLO<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><x xmlns=\"urn:example:clixon\"><c>x</c></x></config></edit-config></rpc>]]>]]>" "^<rpc-reply $DEFAULTNS><ok/></rpc-reply>]]>]]>$" 2>&1 | awk '/real/ {print $2}'
-
-new "netconf commit small leaf-list config"
-expecteof "time -p $clixon_netconf -qef $cfg" 0 "$DEFAULTHELLO<rpc $DEFAULTNS><commit/></rpc>]]>]]>" "^<rpc-reply $DEFAULTNS><ok/></rpc-reply>]]>]]>$" 2>&1 | awk '/real/ {print $2}'
-
-new "netconf get large leaf-list config"
-expecteof "time -p $clixon_netconf -qef $cfg" 0 "$DEFAULTHELLO<rpc $DEFAULTNS><get-config><source><candidate/></source></get-config></rpc>]]>]]>" "^<rpc-reply $DEFAULTNS><data><x xmlns=\"urn:example:clixon\"><c>0</c><c>1</c>" 2>&1 | awk '/real/ {print $2}'
+expectpart "$(time -p curl $CURLOPTS -X PUT -H "Content-Type: application/yang-data+xml" $RCPROTO://localhost/restconf/data/scaling:x -d @$fdataxml2)" 0 "HTTP/$HVER 20" 2>&1 | awk '/real/ {print $2}'
 
 if [ $RC -ne 0 ]; then
     new "Kill restconf daemon"
@@ -240,20 +228,8 @@ if [ $BE -ne 0 ]; then
     # kill backend
     stop_backend -f $cfg
 fi
+
 rm -rf $dir
-
-# Set by restconf_config
-unset RESTCONFIG
-unset HAVE_LIBNGHTTP2
-unset RCPROTO
-unset HVER
-unset CURLOPTS
-
-# unset conditional parameters 
-unset format
-unset perfnr
-unset perfreq
-unset ret
 
 new "endtest"
 endtest

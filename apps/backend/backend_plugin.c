@@ -57,7 +57,7 @@
 /* cligen */
 #include <cligen/cligen.h>
 
-/* clicon */
+/* clixon */
 #include <clixon/clixon.h>
 
 #include "clixon_backend_transaction.h"
@@ -65,16 +65,17 @@
 #include "clixon_backend_commit.h"
 
 /*! Request plugins to reset system state
+ *
  * The system 'state' should be the same as the contents of running_db
  * @param[in]  cp      Plugin handle
- * @param[in]  h       Clicon handle
+ * @param[in]  h       Clixon handle
  * @param[in]  db      Name of datastore
  * @retval     0       OK
  * @retval    -1       Error
  */
 int
 clixon_plugin_reset_one(clixon_plugin_t *cp,
-                        clicon_handle  h,
+                        clixon_handle  h,
                         char         *db)
 {
     int         retval = -1;
@@ -83,25 +84,26 @@ clixon_plugin_reset_one(clixon_plugin_t *cp,
 
     if ((fn = clixon_plugin_api_get(cp)->ca_reset) != NULL){
         wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
         if (fn(h, db) < 0) {
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+            if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
                 goto done;
-            if (clicon_errno < 0) 
-                clicon_log(LOG_WARNING, "%s: Internal error: Reset callback in plugin: %s returned -1 but did not make a clicon_err call",
+            if (clixon_err_category() < 0)
+                clixon_log(h, LOG_WARNING, "%s: Internal error: Reset callback in plugin: %s returned -1 but did not make a clixon_err call",
                            __FUNCTION__, clixon_plugin_name_get(cp));
             goto done;
         }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
     }
     retval = 0;
  done:
     return retval;
 }
-    
+
 /*! Call all plugins reset callbacks
+ *
  * The system 'state' should be the same as the contents of running_db
  * @param[in]  h       Clixon handle
  * @param[in]  db      Name of datastore
@@ -109,13 +111,13 @@ clixon_plugin_reset_one(clixon_plugin_t *cp,
  * @retval    -1       Error
  */
 int
-clixon_plugin_reset_all(clicon_handle h,
+clixon_plugin_reset_all(clixon_handle h,
                         char         *db)
 {
-    int             retval = -1;
-    clixon_plugin_t  *cp = NULL;
-    
-    clicon_debug(CLIXON_DBG_DETAIL, "%s", __FUNCTION__);
+    int              retval = -1;
+    clixon_plugin_t *cp = NULL;
+
+    clixon_debug(CLIXON_DBG_BACKEND | CLIXON_DBG_DETAIL, "");
     /* Loop through all plugins, call callbacks in each */
     while ((cp = clixon_plugin_each(h, cp)) != NULL) {
         if (clixon_plugin_reset_one(cp, h, db) < 0)
@@ -127,6 +129,7 @@ clixon_plugin_reset_all(clicon_handle h,
 }
 
 /*! Call single plugin "pre-" daemonize callback
+ *
  * @param[in]  cp      Plugin handle
  * @param[in]  h       Clixon handle
  * @retval     0       OK
@@ -134,7 +137,7 @@ clixon_plugin_reset_all(clicon_handle h,
  */
 static int
 clixon_plugin_pre_daemon_one(clixon_plugin_t *cp,
-                             clicon_handle  h)
+                             clixon_handle  h)
 {
     int          retval = -1;
     plgdaemon_t *fn;          /* Daemonize plugin callback function */
@@ -142,18 +145,18 @@ clixon_plugin_pre_daemon_one(clixon_plugin_t *cp,
 
     if ((fn = clixon_plugin_api_get(cp)->ca_pre_daemon) != NULL){
         wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
         if (fn(h) < 0) {
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+            if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
                 goto done;
-            if (clicon_errno < 0)
-                clicon_log(LOG_WARNING, "%s: Internal error: Pre-daemon callback in plugin:\
- %s returned -1 but did not make a clicon_err call",
+            if (clixon_err_category() < 0)
+                clixon_log(h, LOG_WARNING, "%s: Internal error: Pre-daemon callback in plugin:\
+ %s returned -1 but did not make a clixon_err call",
                            __FUNCTION__, clixon_plugin_name_get(cp));
             goto done;
         }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
     }
     retval = 0;
@@ -166,17 +169,17 @@ clixon_plugin_pre_daemon_one(clixon_plugin_t *cp,
  * This point in time is after "start" and before
  * before daemonization/fork,
  * It is not called if backend is started in daemon mode.
- * @param[in]  h       Clicon handle
+ * @param[in]  h       Clixon handle
  * @retval     0       OK
  * @retval    -1       Error
  */
 int
-clixon_plugin_pre_daemon_all(clicon_handle h)
+clixon_plugin_pre_daemon_all(clixon_handle h)
 {
     int            retval = -1;
     clixon_plugin_t *cp = NULL;
 
-    clicon_debug(CLIXON_DBG_DETAIL, "%s", __FUNCTION__);
+    clixon_debug(CLIXON_DBG_BACKEND | CLIXON_DBG_DETAIL, "");
     /* Loop through all plugins, call callbacks in each */
     while ((cp = clixon_plugin_each(h, cp)) != NULL) {
         if (clixon_plugin_pre_daemon_one(cp, h) < 0)
@@ -188,6 +191,7 @@ clixon_plugin_pre_daemon_all(clicon_handle h)
 }
 
 /*! Call single plugin "post-" daemonize callback
+ *
  * @param[in]  cp      Plugin handle
  * @param[in]  h       Clixon handle
  * @retval     0       OK
@@ -195,50 +199,50 @@ clixon_plugin_pre_daemon_all(clicon_handle h)
  */
 static int
 clixon_plugin_daemon_one(clixon_plugin_t *cp,
-                         clicon_handle  h)
+                         clixon_handle  h)
 {
     int          retval = -1;
-    plgdaemon_t *fn;          /* Daemonize plugin callback function */    
+    plgdaemon_t *fn;          /* Daemonize plugin callback function */
     void        *wh = NULL;
 
     if ((fn = clixon_plugin_api_get(cp)->ca_daemon) != NULL){
         wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
         if (fn(h) < 0) {
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+            if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
                 goto done;
-            if (clicon_errno < 0) 
-                clicon_log(LOG_WARNING, "%s: Internal error: Daemon callback in plugin: %s returned -1 but did not make a clicon_err call",
+            if (clixon_err_category() < 0)
+                clixon_log(h, LOG_WARNING, "%s: Internal error: Daemon callback in plugin: %s returned -1 but did not make a clixon_err call",
                            __FUNCTION__, clixon_plugin_name_get(cp));
             goto done;
         }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
     }
     retval = 0;
  done:
     return retval;
 }
-    
+
 /*! Call all plugins "post-" daemonize callbacks
- *                           
+ *
  * This point in time is after "start" and after "pre-daemon" and
  * after daemonization/fork, ie when
  * daemon is in the background but before dropped privileges.
  * In case of foreground mode (-F) it is still called but no fork has occured.
- * @param[in]  h       Clicon handle
+ * @param[in]  h       Clixon handle
  * @retval     0       OK
  * @retval    -1       Error
  * @note Also called for non-background mode
  */
 int
-clixon_plugin_daemon_all(clicon_handle h)
+clixon_plugin_daemon_all(clixon_handle h)
 {
     int            retval = -1;
     clixon_plugin_t *cp = NULL;
-    
-    clicon_debug(CLIXON_DBG_DETAIL, "%s", __FUNCTION__);
+
+    clixon_debug(CLIXON_DBG_BACKEND | CLIXON_DBG_DETAIL, "");
     /* Loop through all plugins, call callbacks in each */
     while ((cp = clixon_plugin_each(h, cp)) != NULL) {
         if (clixon_plugin_daemon_one(cp, h) < 0)
@@ -265,48 +269,48 @@ clixon_plugin_daemon_all(clicon_handle h)
  * @param[in]  h       clicon handle
  * @param[in]  nsc     namespace context for xpath
  * @param[in]  xpath   String with XPATH syntax. or NULL for all
- * @param[in]  pagmode List pagination mode
- * @param[in]  offset  Offset, for list pagination
- * @param[in]  limit   Limit, for list pagination
- * @param[out] remaining  Remaining elements (if limit is non-zero)
  * @param[out] xp      If retval=1, state tree created and returned: <config>...
- * @retval    -1       Fatal error
- * @retval     0       Statedata callback failed. no XML tree returned
  * @retval     1       OK if callback found (and called) xret is set
+ * @retval     0       Statedata callback failed. no XML tree returned
+ * @retval    -1       Fatal error
  */
 static int
 clixon_plugin_statedata_one(clixon_plugin_t *cp,
-                            clicon_handle    h,
+                            clixon_handle    h,
                             cvec            *nsc,
                             char            *xpath,
                             cxobj          **xp)
 {
-    int              retval = -1;
-    plgstatedata_t  *fn;          /* Plugin statedata fn */
-    cxobj           *x = NULL;
-    void            *wh = NULL;
-    
+    int             retval = -1;
+    plgstatedata_t *fn;          /* Plugin statedata fn */
+    cxobj          *x = NULL;
+    void           *wh = NULL;
+
     if ((fn = clixon_plugin_api_get(cp)->ca_statedata) != NULL){
         if ((x = xml_new(DATASTORE_TOP_SYMBOL, NULL, CX_ELMNT)) == NULL)
             goto done;
         wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
         if (fn(h, nsc, xpath, x) < 0){
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+            if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
                 goto done;
-            if (clicon_errno < 0) 
-                clicon_log(LOG_WARNING, "%s: Internal error: State callback in plugin: %s returned -1 but did not make a clicon_err call",
+            if (clixon_err_category() < 0)
+                clixon_log(h, LOG_WARNING, "%s: Internal error: State callback in plugin: %s returned -1 but did not make a clixon_err call",
                            __FUNCTION__, clixon_plugin_name_get(cp));
             goto fail;  /* Dont quit here on user callbacks */
         }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
     }
-    if (xp && x)
+    if (xp && x){
         *xp = x;
+        x = NULL;
+    }
     retval = 1;
  done:
+    if (x)
+        xml_free(x);
     return retval;
  fail:
     retval = 0;
@@ -314,46 +318,45 @@ clixon_plugin_statedata_one(clixon_plugin_t *cp,
 }
 
 /*! Go through all backend statedata callbacks and collect state data
+ *
  * This is internal system call, plugin is invoked (does not call) this function
  * Backend plugins can register 
  * @param[in]     h       clicon handle
  * @param[in]     yspec   Yang spec
  * @param[in]     nsc     Namespace context
  * @param[in]     xpath   String with XPATH syntax. or NULL for all
- * @param[in]     wdef    With-defaults parameter, see RFC 6243
  * @param[in,out] xret    State XML tree is merged with existing tree.
- * @retval       -1       Error
- * @retval        0       Statedata callback failed (xret set with netconf-error)
  * @retval        1       OK
+ * @retval        0       Statedata callback failed (xret set with netconf-error)
+ * @retval       -1       Error
  * @note xret can be replaced in this function
  */
 int
-clixon_plugin_statedata_all(clicon_handle   h,
+clixon_plugin_statedata_all(clixon_handle   h,
                             yang_stmt      *yspec,
                             cvec           *nsc,
                             char           *xpath,
-                            withdefaults_type wdef,
                             cxobj         **xret)
 {
     int              retval = -1;
     int              ret;
     cxobj           *x = NULL;
     clixon_plugin_t *cp = NULL;
-    cbuf            *cberr = NULL; 
+    cbuf            *cberr = NULL;
     cxobj           *xerr = NULL;
-    
-    clicon_debug(CLIXON_DBG_DETAIL, "%s", __FUNCTION__);
+
+    clixon_debug(CLIXON_DBG_BACKEND | CLIXON_DBG_DETAIL, "");
     while ((cp = clixon_plugin_each(h, cp)) != NULL) {
         if ((ret = clixon_plugin_statedata_one(cp, h, nsc, xpath, &x)) < 0)
             goto done;
         if (ret == 0){
             if ((cberr = cbuf_new()) == NULL){
-                clicon_err(OE_UNIX, errno, "cbuf_new");
+                clixon_err(OE_UNIX, errno, "cbuf_new");
                 goto done;
             }
-            /* error reason should be in clicon_err_reason */
+            /* error reason should be in clixon_err_reason */
             cprintf(cberr, "Internal error, state callback in plugin %s returned invalid XML: %s",
-                    clixon_plugin_name_get(cp), clicon_err_reason);
+                    clixon_plugin_name_get(cp), clixon_err_reason());
             if (netconf_operation_failed_xml(&xerr, "application", cbuf_get(cberr)) < 0)
                 goto done;
             xml_free(*xret);
@@ -368,7 +371,7 @@ clixon_plugin_statedata_all(clicon_handle   h,
             x = NULL;
             continue;
         }
-        clicon_debug_xml(CLIXON_DBG_DETAIL, x, "%s %s STATE:", __FUNCTION__, clixon_plugin_name_get(cp));
+        clixon_debug_xml(CLIXON_DBG_BACKEND | CLIXON_DBG_DETAIL, x, "%s STATE:", clixon_plugin_name_get(cp));
         /* XXX: ret == 0 invalid yang binding should be handled as internal error */
         if ((ret = xml_bind_yang(h, x, YB_MODULE, yspec, &xerr)) < 0)
             goto done;
@@ -386,12 +389,14 @@ clixon_plugin_statedata_all(clicon_handle   h,
             goto done;
         /* Remove global defaults and empty non-presence containers */
         /* XXX: only for state data and according to with-defaults setting */
-        if (xml_defaults_nopresence(x, 2) < 0)
+        if (xml_default_nopresence(x, 2, 0) < 0)
             goto done;
-        if ((ret = netconf_trymerge(x, yspec, xret)) < 0)
-            goto done;
-        if (ret == 0)
-            goto fail;
+        if (xpath_first(x, nsc, "%s", xpath) != NULL){
+            if ((ret = netconf_trymerge(x, yspec, xret)) < 0)
+                goto done;
+            if (ret == 0)
+                goto fail;
+        }
         if (x){
             xml_free(x);
             x = NULL;
@@ -412,17 +417,18 @@ clixon_plugin_statedata_all(clicon_handle   h,
 }
 
 /*! Lock database status has changed status
+ *
  * @param[in]  cp      Plugin handle
  * @param[in]  h    Clixon handle
  * @param[in]  db   Database name (eg "running")
  * @param[in]  lock Lock status: 0: unlocked, 1: locked
  * @param[in]  id   Session id (of locker/unlocker)
- * @retval    -1    Fatal error
  * @retval     0    OK
+ * @retval    -1    Fatal error
  */
 static int
 clixon_plugin_lockdb_one(clixon_plugin_t *cp,
-                         clicon_handle    h,
+                         clixon_handle    h,
                          char            *db,
                          int              lock,
                          int              id)
@@ -430,14 +436,14 @@ clixon_plugin_lockdb_one(clixon_plugin_t *cp,
     int          retval = -1;
     plglockdb_t *fn;          /* Plugin statedata fn */
     void        *wh = NULL;
-    
+
     if ((fn = clixon_plugin_api_get(cp)->ca_lockdb) != NULL){
         wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
         if (fn(h, db, lock, id) < 0)
-            goto done;  
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
+            goto done;
+        if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
             goto done;
     }
     retval = 0;
@@ -446,15 +452,16 @@ clixon_plugin_lockdb_one(clixon_plugin_t *cp,
 }
 
 /*! Lock database status has changed status
+ *
  * @param[in]  h    Clixon handle
  * @param[in]  db   Database name (eg "running")
  * @param[in]  lock Lock status: 0: unlocked, 1: locked
  * @param[in]  id   Session id (of locker/unlocker)
- * @retval    -1    Fatal error
  * @retval     0    OK
+ * @retval    -1    Fatal error
 */
 int
-clixon_plugin_lockdb_all(clicon_handle h,
+clixon_plugin_lockdb_all(clixon_handle h,
                          char         *db,
                          int           lock,
                          int           id
@@ -463,55 +470,28 @@ clixon_plugin_lockdb_all(clicon_handle h,
 {
     int              retval = -1;
     clixon_plugin_t *cp = NULL;
-    
-    clicon_debug(CLIXON_DBG_DETAIL, "%s", __FUNCTION__);
+
+    clixon_debug(CLIXON_DBG_BACKEND | CLIXON_DBG_DETAIL, "");
     while ((cp = clixon_plugin_each(h, cp)) != NULL) {
         if (clixon_plugin_lockdb_one(cp, h, db, lock, id) < 0)
             goto done;
-    } 
+    }
     retval = 0;
  done:
     return retval;
 }
 
-/*! Traverse state data callbacks
- * 
- * @param[in]  h      Clixon handle
- * @param[in]  xpath  Registered XPath using canonical prefixes
- */
-int
-clixon_pagination_cb_call(clicon_handle h,
-                          char        *xpath,
-                          int          locked,
-                          uint32_t     offset,
-                          uint32_t     limit,
-                          cxobj       *xstate)
-{
-    int                 retval = -1;
-    pagination_data_t   pd;
-    dispatcher_entry_t *htable = NULL;
-
-    pd.pd_offset = offset;
-    pd.pd_limit = limit;
-    pd.pd_locked = locked;
-    pd.pd_xstate = xstate;
-    clicon_ptr_get(h, "pagination-entries", (void**)&htable);
-    if (htable && dispatcher_call_handlers(htable, h, xpath, &pd) < 0)
-        goto done;
-    retval = 1;
- done:
-    return retval;
-}
-
-/*! Register a state data callback 
- * 
+/*! Register a state data callback
+ *
  * @param[in]  h      Clixon handle
  * @param[in]  fn     Callback 
  * @param[in]  xpath  Registered XPath using canonical prefixes
  * @param[in]  arg    Domain-specific argument to send to callback
+ * @retval     0      OK
+ * @retval    -1      Error
  */
 int
-clixon_pagination_cb_register(clicon_handle    h,
+clixon_pagination_cb_register(clixon_handle    h,
                               handler_function fn,
                               char            *xpath,
                               void            *arg)
@@ -519,10 +499,10 @@ clixon_pagination_cb_register(clicon_handle    h,
     int                       retval = -1;
     dispatcher_definition     x = {xpath, fn, arg};
     dispatcher_entry_t       *htable = NULL;
-    
+
     clicon_ptr_get(h, "pagination-entries", (void**)&htable);
     if (dispatcher_register_handler(&htable, &x) < 0){
-        clicon_err(OE_PLUGIN, errno, "dispatcher");
+        clixon_err(OE_PLUGIN, errno, "dispatcher");
         goto done;
     }
     if (clicon_ptr_set(h, "pagination-entries", htable) < 0)
@@ -537,10 +517,10 @@ clixon_pagination_cb_register(clicon_handle    h,
  * @param[in]  h      Clixon handle
  */
 int
-clixon_pagination_free(clicon_handle h)
+clixon_pagination_free(clixon_handle h)
 {
     dispatcher_entry_t       *htable = NULL;
-    
+
     clicon_ptr_get(h, "pagination-entries", (void**)&htable);
     if (htable)
         dispatcher_free(htable);
@@ -548,6 +528,7 @@ clixon_pagination_free(clicon_handle h)
 }
 
 /*! Create and initialize a validate/commit transaction 
+ *
  * @retval  td     New alloced transaction, 
  * @retval  NULL   Error
  * @see transaction_free  which deallocates the returned handle
@@ -559,7 +540,7 @@ transaction_new(void)
     static uint64_t     id = 0; /* Global transaction id */
 
     if ((td = malloc(sizeof(*td))) == NULL){
-        clicon_err(OE_CFG, errno, "malloc");
+        clixon_err(OE_CFG, errno, "malloc");
         return NULL;
     }
     memset(td, 0, sizeof(*td));
@@ -571,13 +552,35 @@ transaction_new(void)
  *
  * @param[in]  td      Transaction data will be deallocated after the call
  */
-int 
+int
 transaction_free(transaction_data_t *td)
 {
-    if (td->td_src)
-        xml_free(td->td_src);
-    if (td->td_target)
-        xml_free(td->td_target);
+    return transaction_free1(td, 1);
+}
+
+/*! Free transaction structure
+ *
+ * @param[in]  td    Transaction data will be deallocated after the call
+ * @param[in]  copy  0: XML trees are no-copy, clear and dont free, 1: free XML trees
+ */
+int
+transaction_free1(transaction_data_t *td,
+                  int                 copy)
+{
+    if (td->td_src){
+        if (copy)
+            xml_free(td->td_src);
+        else
+            xml_apply(td->td_src, CX_ELMNT, (xml_applyfn_t*)xml_flag_reset,
+                      (void*)(XML_FLAG_NONE|XML_FLAG_ADD|XML_FLAG_DEL|XML_FLAG_CHANGE|XML_FLAG_SKIP|XML_FLAG_MARK));
+    }
+    if (td->td_target){
+        if (copy)
+            xml_free(td->td_target);
+        else
+            xml_apply(td->td_target, CX_ELMNT, (xml_applyfn_t*)xml_flag_reset,
+                      (void*)(XML_FLAG_NONE|XML_FLAG_ADD|XML_FLAG_DEL|XML_FLAG_CHANGE|XML_FLAG_SKIP|XML_FLAG_MARK));
+    }
     if (td->td_dvec)
         free(td->td_dvec);
     if (td->td_avec)
@@ -590,7 +593,36 @@ transaction_free(transaction_data_t *td)
     return 0;
 }
 
+static int
+plugin_transaction_call_one(clixon_handle       h,
+			    clixon_plugin_t    *cp,
+			    trans_cb_t         *fn,
+			    const char         *fnname,
+			    transaction_data_t *td)
+{
+    int  retval = -1;
+    int  rv;
+    void *wh = NULL;
+
+    wh = NULL;
+    if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), fnname) < 0)
+        goto done;
+    rv = fn(h, (transaction_data)td);
+    if (clixon_resource_check(h, &wh, clixon_plugin_name_get(cp), fnname) < 0)
+        goto done;
+    if (rv < 0) {
+        if (!clixon_err_category()) /* sanity: log if clixon_err() is not called ! */
+            clixon_log(h, LOG_NOTICE, "%s: Plugin '%s' callback does not make clixon_err call on error",
+                       fnname, clixon_plugin_name_get(cp));
+        goto done;
+    }
+    retval = 0;
+ done:
+    return retval;
+}
+
 /*! Call single plugin transaction_begin() before a validate/commit.
+ *
  * @param[in]  cp      Plugin handle
  * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
@@ -599,49 +631,33 @@ transaction_free(transaction_data_t *td)
  */
 int
 plugin_transaction_begin_one(clixon_plugin_t    *cp,
-                             clicon_handle       h, 
+                             clixon_handle       h,
                              transaction_data_t *td)
 {
-    int         retval = -1;
     trans_cb_t *fn;
-    void       *wh = NULL;
-    
-    if ((fn = clixon_plugin_api_get(cp)->ca_trans_begin) != NULL){
-        wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-        if (fn(h, (transaction_data)td) < 0){
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-                goto done;
-            if (!clicon_errno) /* sanity: log if clicon_err() is not called ! */
-                clicon_log(LOG_NOTICE, "%s: Plugin '%s' callback does not make clicon_err call on error", 
-                       __FUNCTION__, clixon_plugin_name_get(cp));
-            goto done;
-        }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-    }
-    retval = 0;
- done:
-    return retval;
+
+    if ((fn = clixon_plugin_api_get(cp)->ca_trans_begin) != NULL)
+        return plugin_transaction_call_one(h, cp, fn, __FUNCTION__, td);
+    return 0;
 }
 
 /* The plugin_transaction routines need access to struct plugin which is local to this file */
 
 /*! Call transaction_begin() in all plugins before a validate/commit.
- * @param[in]  h       Clicon handle
+ *
+ * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
  * @retval     0       OK
  * @retval    -1       Error: one of the plugin callbacks returned error
  */
 int
-plugin_transaction_begin_all(clicon_handle       h, 
+plugin_transaction_begin_all(clixon_handle       h,
                              transaction_data_t *td)
 {
     int            retval = -1;
     clixon_plugin_t *cp = NULL;
 
-    clicon_debug(CLIXON_DBG_DETAIL, "%s", __FUNCTION__);
+    clixon_debug(CLIXON_DBG_BACKEND | CLIXON_DBG_DETAIL, "");
     while ((cp = clixon_plugin_each(h, cp)) != NULL) {
         if (plugin_transaction_begin_one(cp, h, td) < 0)
             goto done;
@@ -652,6 +668,7 @@ plugin_transaction_begin_all(clicon_handle       h,
 }
 
 /*! Call single plugin transaction_validate() in a validate/commit transaction
+ *
  * @param[in]  cp      Plugin handle
  * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
@@ -659,43 +676,26 @@ plugin_transaction_begin_all(clicon_handle       h,
  * @retval    -1       Error
  */
 int
-plugin_transaction_validate_one(clixon_plugin_t      *cp,
-                                clicon_handle       h, 
+plugin_transaction_validate_one(clixon_plugin_t    *cp,
+                                clixon_handle       h,
                                 transaction_data_t *td)
 {
-    int         retval = -1;
     trans_cb_t *fn;
-    void       *wh = NULL;
 
-    if ((fn = clixon_plugin_api_get(cp)->ca_trans_validate) != NULL){
-        wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-        if (fn(h, (transaction_data)td) < 0){
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-                goto done;
-            if (!clicon_errno) /* sanity: log if clicon_err() is not called ! */
-                clicon_log(LOG_NOTICE, "%s: Plugin '%s' callback does not make clicon_err call on error", 
-                       __FUNCTION__, clixon_plugin_name_get(cp));
-
-            goto done;
-        }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-    }
-    retval = 0;
- done:
-    return retval;
+    if ((fn = clixon_plugin_api_get(cp)->ca_trans_validate) != NULL)
+        return plugin_transaction_call_one(h, cp, fn, __FUNCTION__, td);
+    return 0;
 }
 
 /*! Call transaction_validate callbacks in all backend plugins
- * @param[in]  h       Clicon handle
+ *
+ * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
  * @retval     0       OK. Validation succeeded in all plugins
  * @retval    -1       Error: one of the plugin callbacks returned validation fail
  */
 int
-plugin_transaction_validate_all(clicon_handle       h,   
+plugin_transaction_validate_all(clixon_handle       h,
                                 transaction_data_t *td)
 {
     int            retval = -1;
@@ -711,6 +711,7 @@ plugin_transaction_validate_all(clicon_handle       h,
 }
 
 /*! Call single plugin transaction_complete() in a validate/commit transaction
+ *
  * complete is called after validate (before commit)
  * @param[in]  cp      Plugin handle
  * @param[in]  h       Clixon handle
@@ -719,36 +720,20 @@ plugin_transaction_validate_all(clicon_handle       h,
  * @retval    -1       Error
  */
 int
-plugin_transaction_complete_one(clixon_plugin_t      *cp,
-                                clicon_handle       h, 
+plugin_transaction_complete_one(clixon_plugin_t    *cp,
+                                clixon_handle       h,
                                 transaction_data_t *td)
 {
-    int         retval = -1;
     trans_cb_t *fn;
-    void       *wh = NULL;
-    
-    if ((fn = clixon_plugin_api_get(cp)->ca_trans_complete) != NULL){
-        wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-        if (fn(h, (transaction_data)td) < 0){
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-                goto done;
-            if (!clicon_errno) /* sanity: log if clicon_err() is not called ! */
-                clicon_log(LOG_NOTICE, "%s: Plugin '%s' callback does not make clicon_err call on error", 
-                       __FUNCTION__, clixon_plugin_name_get(cp));
-            goto done;
-        }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-    }
-    retval = 0;
- done:
-    return retval;
+
+    if ((fn = clixon_plugin_api_get(cp)->ca_trans_complete) != NULL)
+        return plugin_transaction_call_one(h, cp, fn, __FUNCTION__, td);
+    return 0;
 }
 
 /*! Call transaction_complete() in all plugins after validation (before commit)
- * @param[in]  h       Clicon handle
+ *
+ * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
  * @retval     0       OK
  * @retval    -1       Error: one of the plugin callbacks returned error
@@ -756,7 +741,7 @@ plugin_transaction_complete_one(clixon_plugin_t      *cp,
  * @note Rename to transaction_complete?
  */
 int
-plugin_transaction_complete_all(clicon_handle       h, 
+plugin_transaction_complete_all(clixon_handle       h,
                                 transaction_data_t *td)
 {
     int            retval = -1;
@@ -772,6 +757,7 @@ plugin_transaction_complete_all(clicon_handle       h,
 }
 
 /*! Revert a commit
+ *
  * @param[in]  h   CLICON handle
  * @param[in]  td  Transaction data
  * @param[in]  nr  The plugin where an error occured. 
@@ -781,28 +767,44 @@ plugin_transaction_complete_all(clicon_handle       h,
  * plugin 2, then the revert will be made in plugins 1 and 0.
  */
 static int
-plugin_transaction_revert_all(clicon_handle       h, 
+plugin_transaction_revert_all(clixon_handle       h,
                               transaction_data_t *td,
                               int                 nr)
 {
-    int                retval = 0;
-    clixon_plugin_t     *cp = NULL;
-    trans_cb_t        *fn;
-    
+    int              retval = 0;
+    clixon_plugin_t *cp = NULL;
+    trans_cb_t      *fn;
+
     while ((cp = clixon_plugin_each_revert(h, cp, nr)) != NULL) {
         if ((fn = clixon_plugin_api_get(cp)->ca_trans_revert) == NULL)
             continue;
+
         if ((retval = fn(h, (transaction_data)td)) < 0){
-                clicon_log(LOG_NOTICE, "%s: Plugin '%s' trans_revert callback failed", 
+            clixon_log(h, LOG_NOTICE, "%s: Plugin '%s' trans_revert callback failed",
                            __FUNCTION__, clixon_plugin_name_get(cp));
-                break; 
+                break;
         }
     }
     return retval; /* ignore errors */
 }
 
+/*! Revert a commit for failed plugin
+ * The commit failed is called for only failed plugin before revert all cb.
+ */
+static int
+plugin_transaction_commit_failed(clixon_plugin_t      *cp,
+                                clixon_handle       h,
+                                transaction_data_t *td)
+{
+    trans_cb_t *fn;
+
+    if ((fn = clixon_plugin_api_get(cp)->ca_trans_commit_failed) != NULL)
+        return plugin_transaction_call_one(h, cp, fn, __FUNCTION__, td);
+    return 0;
+}
 
 /*! Call single plugin transaction_commit() in a commit transaction
+ *
  * @param[in]  cp      Plugin handle
  * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
@@ -811,35 +813,19 @@ plugin_transaction_revert_all(clicon_handle       h,
  */
 int
 plugin_transaction_commit_one(clixon_plugin_t      *cp,
-                              clicon_handle       h, 
+                              clixon_handle       h,
                               transaction_data_t *td)
 {
-    int         retval = -1;
     trans_cb_t *fn;
-    void       *wh = NULL;
-    
-    if ((fn = clixon_plugin_api_get(cp)->ca_trans_commit) != NULL){
-        wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-        if (fn(h, (transaction_data)td) < 0){
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-                goto done;
-            if (!clicon_errno) /* sanity: log if clicon_err() is not called ! */
-                clicon_log(LOG_NOTICE, "%s: Plugin '%s' callback does not make clicon_err call on error", 
-                       __FUNCTION__, clixon_plugin_name_get(cp));
-            goto done;
-        }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-    }
-    retval = 0;
- done:
-    return retval;
+
+    if ((fn = clixon_plugin_api_get(cp)->ca_trans_commit) != NULL)
+        return plugin_transaction_call_one(h, cp, fn, __FUNCTION__, td);
+    return 0;
 }
 
 /*! Call transaction_commit callbacks in all backend plugins
- * @param[in]  h       Clicon handle
+ *
+ * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
  * @retval     0       OK
  * @retval    -1       Error: one of the plugin callbacks returned error
@@ -848,18 +834,20 @@ plugin_transaction_commit_one(clixon_plugin_t      *cp,
  * and in reverse order.
  */
 int
-plugin_transaction_commit_all(clicon_handle       h, 
+plugin_transaction_commit_all(clixon_handle       h,
                               transaction_data_t *td)
 {
     int            retval = -1;
     clixon_plugin_t *cp = NULL;
     int            i=0;
-    
+
     while ((cp = clixon_plugin_each(h, cp)) != NULL) {
         i++;
         if (plugin_transaction_commit_one(cp, h, td) < 0){
+            /* First make an effort ro revert transaction for the failed plugin */
+            plugin_transaction_commit_failed(cp, h, td);
             /* Make an effort to revert transaction */
-            plugin_transaction_revert_all(h, td, i-1); 
+            plugin_transaction_revert_all(h, td, i-1);
             goto done;
         }
     }
@@ -869,6 +857,7 @@ plugin_transaction_commit_all(clicon_handle       h,
 }
 
 /*! Call single plugin transaction_commit_done() in a commit transaction
+ *
  * @param[in]  cp      Plugin handle
  * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
@@ -876,43 +865,27 @@ plugin_transaction_commit_all(clicon_handle       h,
  * @retval    -1       Error
  */
 int
-plugin_transaction_commit_done_one(clixon_plugin_t      *cp,
-                                   clicon_handle       h, 
+plugin_transaction_commit_done_one(clixon_plugin_t    *cp,
+                                   clixon_handle       h,
                                    transaction_data_t *td)
 {
-    int         retval = -1;
     trans_cb_t *fn;
-    void       *wh = NULL;
-    
-    if ((fn = clixon_plugin_api_get(cp)->ca_trans_commit_done) != NULL){
-        wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-        if (fn(h, (transaction_data)td) < 0){
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-                goto done;
-            if (!clicon_errno) /* sanity: log if clicon_err() is not called ! */
-                clicon_log(LOG_NOTICE, "%s: Plugin '%s' callback does not make clicon_err call on error", 
-                       __FUNCTION__, clixon_plugin_name_get(cp));
-            goto done;
-        }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-    }
-    retval = 0;
- done:
-    return retval;
+
+    if ((fn = clixon_plugin_api_get(cp)->ca_trans_commit_done) != NULL)
+        return plugin_transaction_call_one(h, cp, fn, __FUNCTION__, td);
+    return 0;
 }
 
 /*! Call transaction_commit_done callbacks in all backend plugins
- * @param[in]  h       Clicon handle
+ *
+ * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
  * @retval     0       OK
  * @retval    -1       Error: one of the plugin callbacks returned error
  * @note no revert is done
  */
 int
-plugin_transaction_commit_done_all(clicon_handle       h, 
+plugin_transaction_commit_done_all(clixon_handle       h,
                                    transaction_data_t *td)
 {
     int            retval = -1;
@@ -928,6 +901,7 @@ plugin_transaction_commit_done_all(clicon_handle       h,
 }
 
 /*! Call single plugin transaction_end() in a commit/validate transaction
+ *
  * @param[in]  cp      Plugin handle
  * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
@@ -935,48 +909,32 @@ plugin_transaction_commit_done_all(clicon_handle       h,
  * @retval    -1       Error
  */
 int
-plugin_transaction_end_one(clixon_plugin_t      *cp,
-                           clicon_handle       h, 
+plugin_transaction_end_one(clixon_plugin_t    *cp,
+                           clixon_handle       h,
                            transaction_data_t *td)
 {
-    int         retval = -1;
     trans_cb_t *fn;
-    void       *wh = NULL;
-    
-    if ((fn = clixon_plugin_api_get(cp)->ca_trans_end) != NULL){
-        wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-        if (fn(h, (transaction_data)td) < 0){
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-                goto done;
-            if (!clicon_errno) /* sanity: log if clicon_err() is not called ! */
-                clicon_log(LOG_NOTICE, "%s: Plugin '%s' callback does not make clicon_err call on error", 
-                       __FUNCTION__, clixon_plugin_name_get(cp));
-            goto done;
-        }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-    }
-    retval = 0;
- done:
-    return retval;
+
+    if ((fn = clixon_plugin_api_get(cp)->ca_trans_end) != NULL)
+        return plugin_transaction_call_one(h, cp, fn, __FUNCTION__, td);
+    return 0;
 }
 
 /*! Call transaction_end() in all plugins after a successful commit.
- * @param[in]  h       Clicon handle
+ *
+ * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
  * @retval     0       OK
  * @retval    -1       Error
  */
 int
-plugin_transaction_end_all(clicon_handle h,
+plugin_transaction_end_all(clixon_handle h,
                            transaction_data_t *td)
 {
     int            retval = -1;
     clixon_plugin_t *cp = NULL;
 
-    clicon_debug(CLIXON_DBG_DETAIL, "%s", __FUNCTION__);
+    clixon_debug(CLIXON_DBG_BACKEND | CLIXON_DBG_DETAIL, "");
     while ((cp = clixon_plugin_each(h, cp)) != NULL) {
         if (plugin_transaction_end_one(cp, h, td) < 0)
             goto done;
@@ -987,48 +945,32 @@ plugin_transaction_end_all(clicon_handle h,
 }
 
 int
-plugin_transaction_abort_one(clixon_plugin_t      *cp,
-                             clicon_handle       h, 
+plugin_transaction_abort_one(clixon_plugin_t    *cp,
+                             clixon_handle       h,
                              transaction_data_t *td)
 {
-    int         retval = -1;
     trans_cb_t *fn;
-    void       *wh = NULL;
-    
-    if ((fn = clixon_plugin_api_get(cp)->ca_trans_abort) != NULL){
-        wh = NULL;
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-        if (fn(h, (transaction_data)td) < 0){
-            if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-                goto done;
-            if (!clicon_errno) /* sanity: log if clicon_err() is not called ! */
-                clicon_log(LOG_NOTICE, "%s: Plugin '%s' callback does not make clicon_err call on error", 
-                       __FUNCTION__, clixon_plugin_name_get(cp));
-            goto done;
-        }
-        if (plugin_context_check(h, &wh, clixon_plugin_name_get(cp), __FUNCTION__) < 0)
-            goto done;
-    }
-    retval = 0;
- done:
-    return retval;
+
+    if ((fn = clixon_plugin_api_get(cp)->ca_trans_abort) != NULL)
+        return plugin_transaction_call_one(h, cp, fn, __FUNCTION__, td);
+    return 0;
 }
 
 /*! Call transaction_abort() in all plugins after a failed validation/commit.
- * @param[in]  h       Clicon handle
+ *
+ * @param[in]  h       Clixon handle
  * @param[in]  td      Transaction data
  * @retval     0       OK
  * @retval    -1       Error
  */
 int
-plugin_transaction_abort_all(clicon_handle       h, 
+plugin_transaction_abort_all(clixon_handle       h,
                              transaction_data_t *td)
 {
     int            retval = -1;
     clixon_plugin_t *cp = NULL;
 
-    clicon_debug(CLIXON_DBG_DETAIL, "%s", __FUNCTION__);
+    clixon_debug(CLIXON_DBG_BACKEND | CLIXON_DBG_DETAIL, "");
     while ((cp = clixon_plugin_each(h, cp)) != NULL) {
         if (plugin_transaction_abort_one(cp, h, td) < 0)
             ; /* dont abort on error */

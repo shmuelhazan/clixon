@@ -1,4 +1,5 @@
 #!/usr/bin/env expect -f
+# Use of expect to emulate a terminal with given size, difficult in shell-based test-scripts
 # Tests of paginated state scrolling using expect. Simply that --More-- is shown and
 # that first two pages scroll OK. More tests could be done.
 # Arguments:
@@ -10,20 +11,25 @@
 set timeout 1
 #log_user 0
 
-set stty_init "rows 20 cols 128"
+set stty_init "rows 22 cols 128"
 
 send_user "\nTest State paginate cli scrolling\n"
+
+# grab $clixon_cli from environment
+set clixon_cli $::env(clixon_cli)
 
 set cfg [lindex $argv 0]
 set xpath [lindex $argv 1]
 set line1 [lindex $argv 2]
 set line2 [lindex $argv 3]
 
+set prompt "$::env(USER)@[info hostname] />"
+
 set timeout 15
 
-spawn clixon_cli -f $cfg
+spawn {*}$clixon_cli -f $cfg
 
-send "show pagination xpath $xpath cli\n"
+send "show pagination xpath $xpath\n"
 
 expect {
   timeout { send_user "\n$line1 not received.\n"; exit 1}
@@ -56,6 +62,11 @@ send "q"
 
 expect {
   -ex  "--More--" { send_user "\nMore not expected.\n"; exit 1}
+}
+
+expect {
+  timeout { send_user "\nFinal prompt not received.\n"; exit 1}
+  -ex  "$prompt " { send_user "\nFinal prompt OK.\n"}
 }
 
 send "\d"

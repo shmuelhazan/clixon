@@ -48,16 +48,18 @@ extern "C" {
 #define CLIXON_ERR_SNMP_MIB 0x1000
 
 #define IETF_YANG_SMIV2_NS "urn:ietf:params:xml:ns:yang:ietf-yang-smiv2"
+#define CLIXON_SNMP_NS "http://clicon.org/snmp"
 
 /* Special case/extended Clixon ASN1 types
  * Set in type_yang2asn1() if extended is true
  * Must be back to proper net-snmp ASN_ types in type_snmp2xml and type_xml2snmp
  * before calling netsnmp API
 */
+#define CLIXON_ASN_BIT_STRING   252 /* Special case used to identify a bit string data type */
 #define CLIXON_ASN_EXTRAS       253 /* Special case clixon address >= this */
 #define CLIXON_ASN_PHYS_ADDR    253 /* Special case phy-address */
 #define CLIXON_ASN_FIXED_STRING 254 /* RFC2578 Sec 7.7: String-valued, fixed-length */
-#define CLIXON_ASN_ROWSTATUS    255 
+#define CLIXON_ASN_ROWSTATUS    255
 
 /*
  * Types 
@@ -65,15 +67,15 @@ extern "C" {
 /* Userdata to pass around in netsmp callbacks
  */
 struct clixon_snmp_handle {
-    clicon_handle sh_h;
+    clixon_handle sh_h;
     yang_stmt    *sh_ys;               /* Leaf for scalar, list for table */
     oid           sh_oid[MAX_OID_LEN]; /* OID of registered table (list) */
     size_t        sh_oidlen;
     oid           sh_oid2[MAX_OID_LEN]; /* OID of registered container */
-    size_t        sh_oid2len;           
+    size_t        sh_oid2len;
     char         *sh_default;          /* MIB default value leaf only */
     cvec         *sh_cvk_orig;         /* Index/Key variable values (original) */
-    netsnmp_table_registration_info *sh_table_info; /* To mimic table-handler in libnetsnmp code 
+    netsnmp_table_registration_info *sh_table_info; /* To mimic table-handler in libnetsnmp code
                                                      * save only to free properly */
 };
 typedef struct clixon_snmp_handle clixon_snmp_handle;
@@ -86,6 +88,7 @@ int    oid_append(const oid *objid0, size_t *objid0len, const oid *objid1, size_
 int    oid_cbuf(cbuf *cb, const oid *objid, size_t objidlen);
 int    oid_print(FILE *f, const oid *objid, size_t objidlen);
 int    snmp_yang_type_get(yang_stmt *ys, yang_stmt **yrefp, char **origtypep, yang_stmt **yrestypep, char **restypep);
+int    yang_extension_value_opt(yang_stmt *ys, char *id, int *exist, char **value);
 int    yangext_oid_get(yang_stmt *yn, oid *objid, size_t *objidlen, char **objidstr);
 int    yangext_is_oid_exist(yang_stmt *yn);
 int    snmp_access_str2int(char *modes_str);
@@ -100,12 +103,13 @@ int    type_snmp2xml(yang_stmt                  *ys,
                      netsnmp_request_info       *requests,
                      char                      **valstr);
 int    type_xml2snmp_pre(char *xmlstr, yang_stmt *ys, char **snmpstr);
-int    type_xml2snmp(char *snmpstr, int *asn1type, u_char **snmpval, size_t *snmplen, char **reason);
+int    type_xml2snmp(char *snmpstr, yang_stmt *ys, int *asn1type, u_char **snmpval, size_t *snmplen, char **reason);
 int    snmp_yang2xpath(yang_stmt *ys, cvec *keyvec, char **xpath);
 int    snmp_str2oid(char *str, yang_stmt *yi, oid *objid, size_t *objidlen);
 int    snmp_oid2str(oid **oidi, size_t *oidilen, yang_stmt *yi, cg_var *cv);
 int    clixon_snmp_err_cb(void *handle, int suberr, cbuf *cb);
 int    snmp_xmlkey2val_oid(cxobj *xrow, cvec *cvk_name, cvec **cvk_orig, oid *objidk, size_t *objidklen);
+int    clixon_snmp_ylist_keys(yang_stmt *ylist, cvec **ylist_keys);
 
 /*========== libnetsnmp-specific code =============== */
 int    clixon_snmp_api_agent_check(void);
@@ -117,4 +121,3 @@ int    clixon_snmp_api_oid_find(oid *oid1, size_t oidlen);
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-

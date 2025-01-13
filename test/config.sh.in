@@ -64,19 +64,21 @@ CC=@CC@
 # Top src dir
 TOP_SRCDIR=@top_srcdir@
 
-# Clixon version
-CLIXON_VERSION=@CLIXON_VERSION@
+CLICON_USER=@CLICON_USER@
+CLICON_GROUP=@CLICON_GROUP@
 
 # Which XML symbol to add to top datastore config level
 # see also DATASTORE_TOP_SYMBOL
 DATASTORE_TOP="config"
 
 # clixon yang revisions occuring in tests (see eg yang/clixon/Makefile.in)
-CLIXON_AUTOCLI_REV="2022-02-11"
-CLIXON_LIB_REV="2022-12-01"
-CLIXON_CONFIG_REV="2022-12-01"
+CLIXON_AUTOCLI_REV="2024-08-01"
+CLIXON_LIB_REV="2024-11-01"
+CLIXON_CONFIG_REV="2024-11-01"
 CLIXON_RESTCONF_REV="2022-08-01"
 CLIXON_EXAMPLE_REV="2022-11-01"
+
+CLIXON_VERSION="@CLIXON_VERSION@"
 
 # Length of TSL RSA key
 # Problem with small key such as 1024 not allowed in centos8 for example (why is this)
@@ -96,5 +98,7 @@ YANG_STANDARD_DIR=@YANG_STANDARD_DIR@
 YANG_INSTALLDIR=@YANG_INSTALLDIR@
 
 MIB_GENERATED_YANG_DIR=@MIB_GENERATED_YANG_DIR@
+
+MIBDIRS=/usr/share/snmp/mibs:mibs:@MIB_GENERATED_YANG_DIR@
 
 SSH_BIN=@SSH_BIN@

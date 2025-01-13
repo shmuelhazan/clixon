@@ -48,10 +48,10 @@
 #include <stdarg.h>
 #include <time.h>
 #include <ctype.h>
-
 #include <unistd.h>
-#include <dirent.h>
 #include <syslog.h>
+#include <pwd.h>
+#include <inttypes.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/types.h>
@@ -60,12 +60,11 @@
 #include <sys/wait.h>
 #include <sys/param.h>
 #include <sys/mount.h>
-#include <pwd.h>
 
 /* cligen */
 #include <cligen/cligen.h>
 
-/* clicon */
+/* clixon */
 #include <clixon/clixon.h>
 
 /* Exported functions in this file are in clixon_cli_api.h */
@@ -73,10 +72,17 @@
 #include "cli_autocli.h"
 #include "cli_common.h" /* internal functions */
 
-/*! Given an xpath encoded in a cbuf, append a second xpath into the first
+/*! Given an xpath encoded in a cbuf, append a second xpath into the first (unless absolute path)
  *
  * The method reuses prefixes from xpath1 if they exist, otherwise the module prefix
  * from y is used. Unless the element is .., .
+ * @param[in,out] cb0     Result XPath as cbuf
+ * @param[in]     xpath1  Input XPath
+ * @param[in]     y       Yang of xpath1
+ * @param[in,out] nsc     Namespace
+ * @retval        0       OK
+ * @retval       -1       Error
+ *
  * XXX: Predicates not handled
  * The algorithm is not fool-proof, there are many cases it may not work
  * To make it more complete, maybe parse the xpath to a tree and put it
@@ -85,8 +91,6 @@
      goto done;
    if (xpath_tree2cbuf(xpt, xcb) < 0)
      goto done;
-and
-traverse_canonical
  */
 static int
 xpath_append(cbuf      *cb0,
@@ -104,9 +108,12 @@ xpath_append(cbuf      *cb0,
     char  *prefix = NULL;
     int    initialups = 1; /* If starts with ../../.. */
     char  *xpath0;
+    char  *ns;
+    int    ret;
+    int    j;
 
     if (cb0 == NULL){
-        clicon_err(OE_XML, EINVAL, "cb0 is NULL");
+        clixon_err(OE_XML, EINVAL, "cb0 is NULL");
         goto done;
     }
     if (xpath1 == NULL || strlen(xpath1)==0)
@@ -129,7 +136,6 @@ xpath_append(cbuf      *cb0,
         else if (strcmp(id, "..") == 0){
             if (initialups){
                 /* Subtract from xpath0 */
-                int j;
                 for (j=cbuf_len(cb0); j >= 0; j--){
                     if (xpath0[j] != '/')
                         continue;
@@ -144,6 +150,18 @@ xpath_append(cbuf      *cb0,
         }
         else{
             initialups = 0;
+            /* If prefix is not in nsc, it needs to be added */
+            if (prefix && cvec_find(nsc, prefix) == NULL){
+                ns = NULL;
+                if ((ret = yang_find_namespace_by_prefix(y, prefix, &ns)) < 0)
+                    goto done;
+                if (ret == 0){
+                    clixon_err(OE_DB, 0, "Prefix %s does not have an associated namespace", prefix);
+                    goto done;
+                }
+                if (xml_nsctx_add(nsc, prefix, ns) < 0)
+                    goto done;
+            }
             cprintf(cb0, "/%s:%s", prefix?prefix:myprefix, id);
         }
         if (prefix){
@@ -162,89 +180,233 @@ xpath_append(cbuf      *cb0,
         free(prefix);
     if (id)
         free(id);
-    free(vec); 
+    free(vec);
     return retval;
 }
 
-/*! Completion callback intended for automatically generated data model
+/*! Insert (escaped) strings into expand coammnds
+ *
+ * Help function to expand_dbvar
+ * Detect duplicates: for ordered-by system assume list is ordered, so you need
+ * just remember previous but for ordered-by system, check the whole list
+ * Also escape strings if necessary
+ * @param[in]  h        Clixon handle
+ * @param[in]  xvec     XML vector
+ * @param[in]  xlen     Length of XML vector
+ * @param[out] commands Vector of function pointers to callback functions
+ * @retval     0        OK
+ * @retval    -1        Error
+ */
+static int
+expand_dbvar_insert(clixon_handle h,
+                    cxobj       **xvec,
+                    size_t        xlen,
+                    cvec         *commands)
+{
+    int        retval = -1;
+    cxobj     *x;
+    char      *body;
+    char      *bodyesc = NULL; /* escaped */
+    char      *bodyprev = NULL; /* previous */
+    cg_var    *cv;
+    yang_stmt *y;
+    yang_stmt *yp = NULL;
+    int        user_ordered_list = 0;
+    cg_obj    *co;
+    int        doesc;
+    int        i;
+    int        ret;
+
+    /* Dont escape if REST, peek on cligen-object */
+    if ((co = cligen_co_match(cli_cligen(h))) != NULL &&
+        ISREST(co)){
+        doesc = 0;
+    }
+    else
+        doesc = 1;
+    for (i = 0; i < xlen; i++) {
+        x = xvec[i];
+        /* First element, check if in ordered-by-user list */
+        if (i == 0){
+            if ((y = xml_spec(xvec[i])) != NULL &&
+                (yp = yang_parent_get(y)) != NULL &&
+                yang_keyword_get(yp) == Y_LIST &&
+                yang_find(yp, Y_ORDERED_BY, "user") != NULL){
+                user_ordered_list = 1;
+            }
+        }
+        if (xml_type(x) == CX_BODY)
+            body = xml_value(x);
+        else
+            body = xml_body(x);
+        if (body == NULL)
+            continue;
+        bodyesc = NULL;
+        if (doesc) {
+            if ((ret = cligen_escape_need(body)) < 0)
+                goto done;
+            if (ret){
+                if ((bodyesc = cligen_escape_do(body)) == NULL)
+                    goto done;
+            }
+        }
+        if (user_ordered_list) {
+            /* Detect duplicates linearly in existing values */
+            cv = NULL;
+            while ((cv = cvec_each(commands, cv)) != NULL)
+                if (strcmp(cv_string_get(cv), bodyesc?bodyesc:body) == 0)
+                    break;
+            if (cv == NULL){
+                if (cvec_add_string(commands, NULL, bodyesc?bodyesc:body) < 0) {
+                    clixon_err(OE_UNIX, errno, "cvec_add_string");
+                    goto done;
+                }
+            }
+        }
+        else{
+            /* Remember previous */
+            if (bodyprev && strcmp(body, bodyprev) == 0){
+                if (bodyesc){
+                    free(bodyesc);
+                    bodyesc = NULL;
+                }
+                continue; /* duplicate, assume sorted */
+            }
+            bodyprev = body;
+            if (cvec_add_string(commands, NULL, bodyesc?bodyesc:body) < 0){
+                clixon_err(OE_UNIX, errno, "cvec_add_string");
+                goto done;
+            }
+        }
+        if (bodyesc){
+            free(bodyesc);
+            bodyesc = NULL;
+        }
+    }
+    retval = 0;
+ done:
+    if (bodyesc)
+        free(bodyesc);
+    return retval;
+}
+
+/*! Completion callback of variable for configured data and automatically generated data model
  *
  * Returns an expand-type list of commands as used by cligen 'expand' 
  * functionality.
  *
  * Assume callback given in a cligen spec: a <x:int expand_dbvar("db" "<xmlkeyfmt>")
- * @param[in]   h        clicon handle 
+ * @param[in]   h        clicon handle
  * @param[in]   name     Name of this function (eg "expand_dbvar")
  * @param[in]   cvv      The command so far. Eg: cvec [0]:"a 5 b"; [1]: x=5;
- * @param[in]   argv     Arguments given at the callback ("<db>" "<xmlkeyfmt>")
+ * @param[in]   argv     Arguments given at the callback:
+ *   <db>            Name of datastore, such as "running"
+ *   <api_path_fmt>  Generated API PATH (this is sometimes added implicitly)
+ *   [<mt-point>]    Optional YANG path-arg/xpath from mount-point
  * @param[out]  commands vector of function pointers to callback functions
  * @param[out]  helptxt  vector of pointers to helptexts
- * @see cli_expand_var_generate  This is where arg is generated
+ * @retval      0        OK
+ * @retval     -1        Error
+ * @see cli_expand_var_generate where api_path_fmt + mt-point are generated
+ * The syntax of <api_path_fmt> is of RFC8040 api-path with the following extension:
+ *   %s  Represents the values of cvv in order starting from element 1
+ *   %k  Represents the (first) key of the (previous) list
  */
 int
-expand_dbvar(void   *h, 
-             char   *name, 
-             cvec   *cvv, 
-             cvec   *argv, 
+expand_dbvar(void   *h,
+             char   *name,
+             cvec   *cvv,
+             cvec   *argv,
              cvec   *commands,
              cvec   *helptexts)
 {
     int              retval = -1;
+    cbuf            *api_path_fmt_cb = NULL;
     char            *api_path_fmt;
     char            *api_path = NULL;
-    char            *dbstr;    
+    char            *api_path_fmt01 = NULL;
+    char            *dbstr;
     cxobj           *xt = NULL;
     char            *xpath = NULL;
     cxobj          **xvec = NULL;
     cxobj           *xe; /* direct ptr */
     cxobj           *xerr = NULL; /* free */
     size_t           xlen = 0;
-    cxobj           *x;
-    char            *bodystr;
-    int              i;
-    char            *bodystr0 = NULL; /* previous */
     cg_var          *cv;
-    yang_stmt       *yspec;
     cxobj           *xtop = NULL; /* xpath root */
     cxobj           *xbot = NULL; /* xpath, NULL if datastore */
     yang_stmt       *y = NULL; /* yang spec of xpath */
-    yang_stmt       *yp;
     cvec            *nsc = NULL;
     int              ret;
     int              cvvi = 0;
     cbuf            *cbxpath = NULL;
     yang_stmt       *ypath;
     yang_stmt       *ytype;
-    
-    if (argv == NULL || cvec_len(argv) != 2){
-        clicon_err(OE_PLUGIN, EINVAL, "requires arguments: <db> <xmlkeyfmt>");
+    char            *mtpoint = NULL;
+    yang_stmt       *yspec0 = NULL;
+    cvec            *nsc0 = NULL;
+    char            *str;
+    int              grouping_treeref;
+    cvec            *callback_cvv;
+
+    if (argv == NULL || (cvec_len(argv) != 2 && cvec_len(argv) != 3)){
+        clixon_err(OE_PLUGIN, EINVAL, "requires arguments: <db> <apipathfmt> [<mountpt>]");
         goto done;
     }
-    if ((yspec = clicon_dbspec_yang(h)) == NULL){
-        clicon_err(OE_FATAL, 0, "No DB_SPEC");
+    if ((yspec0 = clicon_dbspec_yang(h)) == NULL){
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
         goto done;
     }
     if ((cv = cvec_i(argv, 0)) == NULL){
-        clicon_err(OE_PLUGIN, 0, "Error when accessing argument <db>");
+        clixon_err(OE_PLUGIN, 0, "Error when accessing argument <db>");
         goto done;
     }
-    dbstr  = cv_string_get(cv);
+    dbstr = cv_string_get(cv);
     if (strcmp(dbstr, "running") != 0 &&
         strcmp(dbstr, "candidate") != 0 &&
         strcmp(dbstr, "startup") != 0){
-        clicon_err(OE_PLUGIN, 0, "No such db name: %s", dbstr); 
+        clixon_err(OE_PLUGIN, 0, "No such db name: %s", dbstr);
         goto done;
     }
     if ((cv = cvec_i(argv, 1)) == NULL){
-        clicon_err(OE_PLUGIN, 0, "Error when accessing argument <api_path>");
+        clixon_err(OE_PLUGIN, 0, "Error when accessing argument <api_path>");
         goto done;
     }
-    api_path_fmt = cv_string_get(cv);
-    /* api_path_fmt = /interface/%s/address/%s
-     * api_path: -->  /interface/eth0/address/.*
-     * xpath:    -->  /interface/[name="eth0"]/address
-     */
-    if (api_path_fmt2api_path(api_path_fmt, cvv, &api_path, &cvvi) < 0)
+    if (autocli_grouping_treeref(h, &grouping_treeref) < 0)
         goto done;
+    if ((api_path_fmt_cb = cbuf_new()) == NULL){
+        clixon_err(OE_PLUGIN, errno, "cbuf_new");
+        goto done;
+    }
+    if (grouping_treeref &&
+        (callback_cvv = cligen_callback_arguments_get(cli_cligen(h))) != NULL){
+        /* Concatenate callback arguments to a single prepend string */
+        if (cvec_concat_cb(callback_cvv, api_path_fmt_cb) < 0)
+            goto done;
+    }
+    cprintf(api_path_fmt_cb, "%s", cv_string_get(cv));
+    api_path_fmt = cbuf_get(api_path_fmt_cb);
+    if (cvec_len(argv) > 2){ /* mountpoint */
+        /* api_path_fmt is without top-level */
+        cv = cvec_i(argv, 2);
+        str = cv_string_get(cv);
+        if (strncmp(str, "mtpoint:", strlen("mtpoint:")) != 0){
+            clixon_err(OE_PLUGIN, 0, "mtpoint does not begin with 'mtpoint:'");
+            goto done;
+        }
+        mtpoint = str + strlen("mtpoint:");
+        /* Get and combined api-path01 */
+        if (mtpoint_paths(yspec0, mtpoint, api_path_fmt, &api_path_fmt01) < 0)
+            goto done;
+        if (api_path_fmt2api_path(api_path_fmt01, cvv, yspec0, &api_path, &cvvi) < 0)
+            goto done;
+    }
+    else{
+        if (api_path_fmt2api_path(api_path_fmt, cvv, yspec0, &api_path, &cvvi) < 0)
+            goto done;
+    }
+    if (api_path == NULL)
+        goto ok;
     /* Create config top-of-tree */
     if ((xtop = xml_new(DATASTORE_TOP_SYMBOL, NULL, CX_ELMNT)) == NULL)
         goto done;
@@ -253,22 +415,33 @@ expand_dbvar(void   *h,
      * xpath2xml would have worked!!
      * XXX: but y is just the first in this list, there could be other y:s?
      */
-    if (api_path){
-        if ((ret = api_path2xml(api_path, yspec, xtop, YC_DATANODE, 0, &xbot, &y, &xerr)) < 0)
-            goto done;
-        if (ret == 0){
-            clixon_netconf_error(xerr, "Expand datastore symbol", NULL);
-            goto done;
-        }
+    if ((ret = api_path2xml(api_path, yspec0, xtop, YC_DATANODE, 0, &xbot, &y, &xerr)) < 0)
+        goto done;
+    if (ret == 0){
+        clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Expand datastore symbol");
+        goto done;
     }
-    if (y==NULL)
-        goto ok;
-    /* Transform api-path to xpath for netconf */
-    if (api_path2xpath(api_path, yspec, &xpath, &nsc, NULL) < 0)
+    if (y == NULL){
+        clixon_err(OE_YANG, 0, "y is NULL");
         goto done;
+    }
+    /* Transform api-path to xpath for netconf  */
+    if ((ret = api_path2xpath(api_path, yspec0, &xpath, &nsc, &xerr)) < 0)
+        goto done;
+    if (ret == 0){
+        clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Expand datastore symbol");
+        goto done;
+    }
     if ((cbxpath = cbuf_new()) == NULL){
-        clicon_err(OE_UNIX, errno, "cbuf_new");
+        clixon_err(OE_UNIX, errno, "cbuf_new");
         goto done;
+    }
+    if (mtpoint){
+        if (xml_nsctx_yangspec(yspec0, &nsc0) < 0)
+            goto done;
+        cv = NULL;      /* Append nsc0 to nsc */
+        while ((cv = cvec_each(nsc0, cv)) != NULL)
+            cvec_append_var(nsc, cv);
     }
     cprintf(cbxpath, "%s", xpath);
     if (clicon_option_bool(h, "CLICON_CLI_EXPAND_LEAFREF") &&
@@ -300,7 +473,7 @@ expand_dbvar(void   *h,
          * the "path" statement is defined.
          */
         if ((ypath = yang_find(ytype, Y_PATH, NULL)) == NULL){
-            clicon_err(OE_DB, 0, "Leafref %s requires path statement", yang_argument_get(ytype));
+            clixon_err(OE_DB, 0, "Leafref %s requires path statement", yang_argument_get(ytype));
             goto done;
         }
         /* Extend xpath with leafref path: Append yang_argument_get(ypath) to xpath
@@ -309,53 +482,26 @@ expand_dbvar(void   *h,
             goto done;
     }
     /* Get configuration based on cbxpath */
-    if (clicon_rpc_get_config(h, NULL, dbstr, cbuf_get(cbxpath), nsc, NULL, &xt) < 0) 
+    if (clicon_rpc_get_config(h, NULL, dbstr, cbuf_get(cbxpath), nsc, NULL, &xt) < 0)
         goto done;
     if ((xe = xpath_first(xt, NULL, "/rpc-error")) != NULL){
-        clixon_netconf_error(xe, "Get configuration", NULL);
-        goto ok; 
+        clixon_err_netconf(h, OE_NETCONF, 0, xe, "Get configuration");
+        goto ok;
     }
-    if (xpath_vec(xt, nsc, "%s", &xvec, &xlen, cbuf_get(cbxpath)) < 0) 
+    if (xpath_vec(xt, nsc, "%s", &xvec, &xlen, cbuf_get(cbxpath)) < 0)
         goto done;
-    /* Loop for inserting into commands cvec. 
-     * Detect duplicates: for ordered-by system assume list is ordered, so you need
-     * just remember previous
-     * but for ordered-by system, check the whole list
-     */
-    bodystr0 = NULL;
-    for (i = 0; i < xlen; i++) {
-        x = xvec[i];
-        if (xml_type(x) == CX_BODY)
-            bodystr = xml_value(x);
-        else
-            bodystr = xml_body(x);
-        if (bodystr == NULL)
-            continue; /* no body, cornercase */
-        if ((y = xml_spec(x)) != NULL &&
-            (yp = yang_parent_get(y)) != NULL &&
-            yang_keyword_get(yp) == Y_LIST &&
-            yang_find(yp, Y_ORDERED_BY, "user") != NULL){
-            /* Detect duplicates linearly in existing values */
-            {
-                cg_var *cv = NULL;
-                while ((cv = cvec_each(commands, cv)) != NULL)
-                    if (strcmp(cv_string_get(cv), bodystr) == 0)
-                        break;
-                if (cv == NULL)
-                    cvec_add_string(commands, NULL, bodystr);
-            }
-        }
-        else{
-            if (bodystr0 && strcmp(bodystr, bodystr0) == 0)
-                continue; /* duplicate, assume sorted */
-            bodystr0 = bodystr;
-            /* RFC3986 decode */
-            cvec_add_string(commands, NULL, bodystr);
-        }
-    }
+    /* Loop for inserting into commands cvec. */
+    if (expand_dbvar_insert(h, xvec, xlen, commands) < 0)
+        goto done;
  ok:
     retval = 0;
-  done:
+ done:
+    if (nsc0)
+        cvec_free(nsc0);
+    if (api_path_fmt_cb)
+        cbuf_free(api_path_fmt_cb);
+    if (api_path_fmt01)
+        free(api_path_fmt01);
     if (cbxpath)
         cbuf_free(cbxpath);
     if (xerr)
@@ -370,23 +516,186 @@ expand_dbvar(void   *h,
         xml_free(xtop);
     if (xt)
         xml_free(xt);
-    if (xpath) 
+    if (xpath)
         free(xpath);
     return retval;
 }
 
-/*! CLI callback show yang spec. If arg given matches yang argument string */
+/*! Completion callback of variable for yang schema list nodes
+ *
+ * Typical yang: 
+ *     container foo { list bar; }
+ *   modA:
+ *     augment foo bar;
+ *   modB:
+ *     augment foo fie;
+ * This function expands foo to: bar, fie...
+ * Or (if <module> is true): modA:bar, modB:fie...
+ * @param[in]   h        clicon handle
+ * @param[in]   name     Name of this function
+ * @param[in]   cvv      The command so far. Eg: cvec [0]:"a 5 b"; [1]: x=5;
+ * @param[in]   argv     Arguments given at the callback:
+ *   <schemanode>        Absolute YANG schema-node (eg: /ctrl:services)
+ *   <modname>           true|false: Show with api-path module-name, eg moda:foo, modb:fie
+ * @param[out]  commands vector of function pointers to callback functions
+ * @param[out]  helptxt  vector of pointers to helptexts
+ * @retval      0        OK
+ * @retval     -1        Error
+ */
 int
-show_yang(clicon_handle h, 
-          cvec         *cvv, 
+expand_yang_list(void   *h,
+                 char   *name,
+                 cvec   *cvv,
+                 cvec   *argv,
+                 cvec   *commands,
+                 cvec   *helptexts)
+{
+    int        retval = -1;
+    int        argc = 0;
+    cg_var    *cv;
+    char      *schema_nodeid;
+    yang_stmt *yspec0 = NULL;
+    yang_stmt *yres = NULL;
+    yang_stmt *yn = NULL;
+    yang_stmt *ydesc;
+    yang_stmt *ymod;
+    int        modname = 0;
+    cbuf      *cb = NULL;
+    int        inext;
+
+    if (argv == NULL || cvec_len(argv) < 1 || cvec_len(argv) > 2){
+        clixon_err(OE_PLUGIN, EINVAL, "requires arguments: <schemanode> [<modname>]");
+        goto done;
+    }
+    if ((cv = cvec_i(argv, argc++)) == NULL){
+        clixon_err(OE_PLUGIN, 0, "Error when accessing argument <schemanode>");
+        goto done;
+    }
+    schema_nodeid = cv_string_get(cv);
+    if (cvec_len(argv) > argc){
+        if (cli_show_option_bool(argv, argc++, &modname) < 0)
+            goto done;
+    }
+    if ((yspec0 = clicon_dbspec_yang(h)) == NULL){
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
+        goto done;
+    }
+    if (yang_abs_schema_nodeid(yspec0, schema_nodeid, &yres) < 0)
+        goto done;
+    if ((cb = cbuf_new()) == NULL){
+        clixon_err(OE_UNIX, errno, "cbuf_new");
+        goto done;
+    }
+    inext = 0;
+    while ((yn = yn_iter(yres, &inext)) != NULL) {
+        if (yang_keyword_get(yn) != Y_LIST)
+            continue;
+        cbuf_reset(cb);
+        if (modname){
+            if (ys_real_module(yn, &ymod) < 0)
+                goto done;
+            cprintf(cb, "%s:", yang_argument_get(ymod));
+        }
+        cprintf(cb, "%s", yang_argument_get(yn));
+        cvec_add_string(commands, NULL, cbuf_get(cb));
+        if ((ydesc = yang_find(yn, Y_DESCRIPTION, NULL)) != NULL)
+            cvec_add_string(helptexts, NULL, yang_argument_get(ydesc));
+        else
+            cvec_add_string(helptexts, NULL, "Service");
+    }
+    retval = 0;
+ done:    
+    if (cb)
+        cbuf_free(cb);
+    return retval;
+}
+
+/*! Completion callback of variable for file directory
+ *
+ * Returns an expand-type list of commands as used by cligen 'expand'
+ * functionality.
+ *
+ * Assume callback given in a cligen spec: a <x:int expand_dbvar("db" "<xmlkeyfmt>")
+ * @param[in]   h        clicon handle
+ * @param[in]   name     Name of this function (eg "expand_dbvar")
+ * @param[in]   cvv      The command so far. Eg: cvec [0]:"a 5 b"; [1]: x=5;
+ * @param[in]   argv     Arguments given at the callback:
+ *   <dir>    File directory
+ *   <regex>  Regexp of files to show
+ * @param[out]  commands vector of function pointers to callback functions
+ * @param[out]  helptxt  vector of pointers to helptexts
+ * @retval      0        OK
+ * @retval     -1        Error
+ * @code
+ *    <callback:string expand_dir("/usr/local/var/pipedir", "\.sh$")>("comment"), Command;
+ * @endcode
+ * @see expand_dbvar
+ */
+int
+expand_dir(void   *h,
+           char   *name,
+           cvec   *cvv,
+           cvec   *argv,
+           cvec   *commands,
+           cvec   *helptexts)
+{
+    int            retval = -1;
+    int            argc = 0;
+    cg_var        *cv;
+    char          *dir;
+    char          *regexp = NULL;
+    struct dirent *dp;
+    int            ndp;
+    int            i;
+
+    if (argv == NULL || cvec_len(argv) < 1 || cvec_len(argv) > 2){
+        clixon_err(OE_PLUGIN, EINVAL, "requires arguments: <dir> [<regexp>]");
+        goto done;
+    }
+    if ((cv = cvec_i(argv, argc++)) == NULL){
+        clixon_err(OE_PLUGIN, 0, "Error when accessing argument <schemanode>");
+        goto done;
+    }
+    dir = cv_string_get(cv);
+    if (cvec_len(argv) > argc){
+        if ((cv = cvec_i(argv, argc++)) == NULL){
+            clixon_err(OE_PLUGIN, 0, "Error when accessing argument <schemanode>");
+            goto done;
+        }
+        regexp = cv_string_get(cv);
+    }
+    if ((ndp = clicon_file_dirent(dir, &dp, regexp, S_IFREG)) < 0)
+        goto done;
+    for (i = 0; i < ndp; i++) {
+        cvec_add_string(commands, NULL, dp[i].d_name);
+    }
+    retval = 0;
+ done:
+    if (dp)
+        free(dp);
+    return retval;
+}
+
+/*! CLI callback show yang spec. If arg given matches yang argument string 
+ *
+ * @param[in]  h     Clixon handle
+ * @param[in]  cvv   Vector of command variables
+ * @param[in]  argv  
+ * @retval     0     OK
+ * @retval    -1     Error
+ */
+int
+show_yang(clixon_handle h,
+          cvec         *cvv,
           cvec         *argv)
 {
     int        retval = -1;
     yang_stmt *yn;
     char      *str = NULL;
     yang_stmt *yspec;
+    int        inext;
 
-    yspec = clicon_dbspec_yang(h);      
+    yspec = clicon_dbspec_yang(h);
     if (cvec_len(argv) > 0){
         if ((str = cv_string_get(cvec_i(argv, 0))) != NULL &&
             (yn = yang_find(yspec, 0, str)) != NULL)
@@ -394,8 +703,8 @@ show_yang(clicon_handle h,
                 goto done;
     }
     else{
-        yn = NULL;
-        while ((yn = yn_each(yspec, yn)) != NULL) {
+        inext = 0;
+        while ((yn = yn_iter(yspec, &inext)) != NULL) {
             if (yang_print_cb(stdout, yn, cligen_output) < 0)
                 goto done;
         }
@@ -416,11 +725,14 @@ show_yang(clicon_handle h,
  * @param[in] extdefault   with-defaults with propriatary extensions
  * @param[in] prepend      CLI prefix to prepend cli syntax, eg "set "
  * @param[in] xpath        XPath
+ * @param[in] fromroot     If 0, display config from node of XPATH, if 1 display from root
  * @param[in] nsc          Namespace mapping for xpath
  * @param[in] skiptop      If set, do not show object itself, only its children
+ * @retval    0            OK
+ * @retval   -1            Error
   */
-static int
-cli_show_common(clicon_handle    h,
+int
+cli_show_common(clixon_handle    h,
                 char            *db,
                 enum format_enum format,
                 int              pretty,
@@ -429,20 +741,21 @@ cli_show_common(clicon_handle    h,
                 char            *extdefault,
                 char            *prepend,
                 char            *xpath,
+                int              fromroot,
                 cvec            *nsc,
                 int              skiptop
                 )
 {
-    int           retval = -1;    
-    cxobj        *xt = NULL;
-    cxobj        *xerr;
-    cxobj       **vec = NULL;
-    size_t        veclen;
-    cxobj        *xp;
-    int           i;
+    int              retval = -1;
+    cxobj           *xt = NULL;
+    cxobj           *xerr;
+    cxobj          **vec = NULL;
+    size_t           veclen;
+    cxobj           *xp;
+    int              i;
 
     if (state && strcmp(db, "running") != 0){
-        clicon_err(OE_FATAL, 0, "Show state only for running database, not %s", db);
+        clixon_err(OE_FATAL, 0, "Show state only for running database, not %s", db);
         goto done;
     }
     if (state == 0){     /* Get configuration-only from a database */
@@ -454,7 +767,7 @@ cli_show_common(clicon_handle    h,
             goto done;
     }
     if ((xerr = xpath_first(xt, NULL, "/rpc-error")) != NULL){
-        clixon_netconf_error(xerr, "Get configuration", NULL);
+        clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Get configuration");
         goto done;
     }
     /* Special tagged modes: strip wd:default=true attribute and (optionally) nodes associated with it */
@@ -464,19 +777,21 @@ cli_show_common(clicon_handle    h,
         if (purge_tagged_nodes(xt, IETF_NETCONF_WITH_DEFAULTS_ATTR_NAMESPACE, "default", "true",
                                strcmp(extdefault, "report-all-tagged-strip")
                                ) < 0)
-            goto done;  
+            goto done;
         /* Remove empty containers */
-        if (xml_defaults_nopresence(xt, 2) < 0)
+        if (xml_default_nopresence(xt, 2, 0) < 0)
             goto done;
     }
-    if (xpath_vec(xt, nsc, "%s", &vec, &veclen, xpath) < 0) 
+    if (fromroot)
+        xpath="/";
+    if (xpath_vec(xt, nsc, "%s", &vec, &veclen, xpath) < 0)
         goto done;
     if (veclen){
         /* Special case LIST */
         if (format == FORMAT_JSON){
-            switch (format){        
+            switch (format){
             case FORMAT_JSON:
-                if (xml2json_vec(stdout, vec, veclen, pretty, skiptop) < 0) // XXX cligen_output
+                if (xml2json_vec(stdout, vec, veclen, pretty, cligen_output, skiptop) < 0)
                     goto done;
                 break;
             default:
@@ -489,16 +804,17 @@ cli_show_common(clicon_handle    h,
                 /* Print configuration according to format */
                 switch (format){
                 case FORMAT_XML:
-                    if (clixon_xml2file(stdout, xp, 0, pretty, cligen_output, skiptop, 1) < 0)
+                    if (clixon_xml2file(stdout, xp, 0, pretty, NULL, cligen_output, skiptop, 1) < 0)
                         goto done;
                     if (!pretty && i == veclen-1)
                         cligen_output(stdout, "\n");
                     break;
                 case FORMAT_TEXT: /* XXX does not handle multiple leaf-list */
-                    if (clixon_txt2file(stdout, xp, 0, cligen_output, skiptop, 1) < 0)
+                    if (clixon_text2file(stdout, xp, 0, cligen_output, skiptop, 1) < 0)
                         goto done;
                     break;
                 case FORMAT_CLI:
+                    /* If xp is not bound, cli prints are skipped */
                     if (clixon_cli2file(h, stdout, xp, prepend, cligen_output, skiptop) < 0) /* cli syntax */
                         goto done;
                     break;
@@ -509,7 +825,7 @@ cli_show_common(clicon_handle    h,
                         if (pretty)
                             cligen_output(stdout, "\n");
                     }
-                    if (clixon_xml2file(stdout, xp, 2, pretty, cligen_output, skiptop, 1) < 0)
+                    if (clixon_xml2file(stdout, xp, 2, pretty, NULL, cligen_output, skiptop, 1) < 0)
                         goto done;
                     if (i == veclen-1)
                         cligen_output(stdout, "</config></edit-config></rpc>]]>]]>\n");
@@ -532,25 +848,48 @@ done:
 
 /*! Common internal parse cli show format option
  *
+ * @param[in]  h      Clixon handle
  * @param[in]  argv   String vector: <dbname> <format> <xpath> [<varname>]
  * @param[in]  argc   Index into argv
  * @param[out] format Output format
  * @retval     0      OK
- * @retval     -1     Error
+ * @retval    -1      Error
  */
-static int 
-cli_show_option_format(cvec             *argv,
+int
+cli_show_option_format(clixon_handle     h,
+                       cvec             *argv,
                        int               argc,
-                       enum format_enum *format)
+                       enum format_enum *formatp)
 {
-    int   retval = -1;
-    char *formatstr;
+    int              retval = -1;
+    enum format_enum format = FORMAT_XML;
+    char            *formatstr;
 
     formatstr = cv_string_get(cvec_i(argv, argc));
-    if ((int)(*format = format_str2int(formatstr)) < 0){
-        clicon_err(OE_PLUGIN, 0, "Not valid format: %s", formatstr);
+    if ((int)(format = format_str2int(formatstr)) < 0){
+        clixon_err(OE_PLUGIN, 0, "Not valid format: %s", formatstr);
         goto done;
     }
+    /* Special pipe xml default handling */
+    if (format == FORMAT_PIPE_XML_DEFAULT){
+        if (cligen_spipe_get(cli_cligen(h)) != -1)
+            format = FORMAT_XML;
+        else
+            format = FORMAT_DEFAULT;
+    }
+    /* Special default format handling */
+    if (format == FORMAT_DEFAULT){
+        formatstr = clicon_option_str(h, "CLICON_CLI_OUTPUT_FORMAT");
+        if ((int)(format = format_str2int(formatstr)) < 0){
+            clixon_err(OE_PLUGIN, 0, "Not valid format: %s", formatstr);
+            goto done;
+        }
+        if (format > FORMAT_NETCONF){
+            clixon_err(OE_PLUGIN, 0, "Not concrete format: %d", format);
+            goto done;
+        }
+    }
+    *formatp = format;
     retval = 0;
  done:
     return retval;
@@ -558,16 +897,16 @@ cli_show_option_format(cvec             *argv,
 
 /*! Common internal parse cli show boolean option
  *
- * @param[in]  argv  String vector: <dbname> <format> <xpath> [<varname>]
- * @param[in]  argc  Index into argv
- * @param[out] bool  result boolean: 0 or 1
- * @retval     0     OK
- * @retval     -1    Error
+ * @param[in]  argv   String vector: <dbname> <format> <xpath> [<varname>]
+ * @param[in]  argc   Index into argv
+ * @param[out] result result boolean: 0 or 1
+ * @retval     0      OK
+ * @retval    -1      Error
  */
-static int 
+int
 cli_show_option_bool(cvec *argv,
                      int   argc,
-                     int  *bool
+                     int  *result
                      )
 {
     int     retval = -1;
@@ -576,14 +915,14 @@ cli_show_option_bool(cvec *argv,
 
     boolstr = cv_string_get(cvec_i(argv, argc));
     if ((boolcv = cv_new(CGV_BOOL)) == NULL){
-        clicon_err(OE_UNIX, errno, "cv_new");
+        clixon_err(OE_UNIX, errno, "cv_new");
         goto done;
     }
     if (cv_parse(boolstr, boolcv) < 0){
-        clicon_err(OE_UNIX, errno, "Parse boolean %s", boolstr);
+        clixon_err(OE_UNIX, errno, "Parse boolean %s", boolstr);
         goto done;
     }
-    *bool = cv_bool_get(boolcv);
+    *result = cv_bool_get(boolcv);
     retval = 0;
  done:
     if (boolcv)
@@ -593,7 +932,7 @@ cli_show_option_bool(cvec *argv,
 
 /*! Common internal parse cli show with-default option
  *
- * Ddefault modes accorsing to RFC6243 + three extra modes based on report-all-tagged:
+ * Default modes accorsing to RFC6243 + three extra modes based on report-all-tagged:
  * 1) NULL
  * 2) report-all-tagged-default  Strip "default" attribute (=report-all)
  * 3) report-all-tagged-strip Strip "default" attribute and all nodes tagged with it (=trim)
@@ -602,9 +941,9 @@ cli_show_option_bool(cvec *argv,
  * @param[in]  withdefault  RFC 6243 with-default modes
  * @param[in]  extdefault   with-defaults with propriatary extensions
  * @retval     0     OK
- * @retval     -1    Error
+ * @retval    -1     Error
  */
-static int 
+int
 cli_show_option_withdefault(cvec  *argv,
                             int    argc,
                             char **withdefault,
@@ -627,7 +966,7 @@ cli_show_option_withdefault(cvec  *argv,
              strcmp(e, "trim") != 0 &&
              strcmp(e, "explicit") != 0 &&
              strcmp(e, "report-all-tagged") != 0){
-        clicon_err(OE_YANG, EINVAL, "Unexpected with-default option: %s", e);
+        clixon_err(OE_YANG, EINVAL, "Unexpected with-default option: %s", e);
         goto done;
     }
     else
@@ -641,7 +980,7 @@ cli_show_option_withdefault(cvec  *argv,
 /*! Generic show configuration callback
  *
  * Does not need to be used with the autocli as cli_show_auto does
- * @param[in]  h     CLICON handle
+ * @param[in]  h     Clixon handle
  * @param[in]  cvv   Vector of variables from CLIgen command-line
  * @param[in]  argv  String vector of show options, format:
  *   <dbname>        Name of datastore, such as "running"
@@ -654,6 +993,8 @@ cli_show_option_withdefault(cvec  *argv,
  *   <default>       Retrieval mode: report-all, trim, explicit, report-all-tagged, 
  *                   NULL, report-all-tagged-default, report-all-tagged-strip (extended)
  *   <prepend>       CLI prefix: prepend before cli syntax output
+ * @retval      0    OK
+ * @retval     -1    Error
  * @code
  *   clispec:
  *      show config, cli_show_config("running","xml");
@@ -671,8 +1012,8 @@ cli_show_option_withdefault(cvec  *argv,
  * @see cli_show_auto_mode  autocli with edit menu support
  */
 int
-cli_show_config(clicon_handle h, 
-                cvec         *cvv, 
+cli_show_config(clixon_handle h,
+                cvec         *cvv,
                 cvec         *argv)
 {
     int              retval = -1;
@@ -687,14 +1028,15 @@ cli_show_config(clicon_handle h,
     int              argc = 0;
     char            *xpath = "/";
     char            *namespace = NULL;
-    
+    int              fromroot = 0;
+
     if (cvec_len(argv) < 2 || cvec_len(argv) > 8){
-        clicon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected: <dbname> [<format><xpath> <namespace> <pretty> <state> <default> <prepend>]", cvec_len(argv));
+        clixon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected: <dbname> [<format><xpath> <namespace> <pretty> <state> <default> <prepend>]", cvec_len(argv));
         goto done;
     }
     dbname = cv_string_get(cvec_i(argv, argc++));
     if (cvec_len(argv) > argc)
-        if (cli_show_option_format(argv, argc++, &format) < 0)
+        if (cli_show_option_format(h, argv, argc++, &format) < 0)
             goto done;
     if (cvec_len(argv) > argc)
         xpath = cv_string_get(cvec_i(argv, argc++));
@@ -724,7 +1066,7 @@ cli_show_config(clicon_handle h,
     }
     if (cli_show_common(h, dbname, format, pretty, state,
                         withdefault, extdefault,
-                        prepend, xpath, nsc, 0) < 0)
+                        prepend, xpath, fromroot, nsc, 0) < 0)
         goto done;
     retval = 0;
  done:
@@ -733,29 +1075,18 @@ cli_show_config(clicon_handle h,
     return retval;
 }
 
-/*! Show configuration and state CLIGEN callback function
+/*! Show configuration xpath
  *
- * @param[in]  h     CLICON handle
+ * @param[in]  h     Clixon handle
  * @param[in]  cvv   Vector of variables from CLIgen command-line
  * @param[in]  argv  String vector of show options, format:
  *   <dbname>  "running"|"candidate"|"startup"
- * @code
- *   show config id <n:string>, cli_show_config("running","xml","iface[name='foo']","urn:example:example");
- * @endcode
- * @see cli_show_config_state  For config and state data (not only config)
- */
-
-/*! Show configuration as text given an xpath using canonical namespace
- *
- * Utility function used by cligen spec file
- * @param[in]  h     CLICON handle
- * @param[in]  cvv   Vector of variables from CLIgen command-line must contain xpath and default namespace (if any)
- * @param[in]  argv  A string: <dbname>
- * @note  Different from cli_show_conf: values taken cvv "xpath" and "ns" instead of argv
+ * @retval     0     OK
+ * @retval    -1     Error
  */
 int
-show_conf_xpath(clicon_handle h, 
-                cvec         *cvv, 
+show_conf_xpath(clixon_handle h,
+                cvec         *cvv,
                 cvec         *argv)
 {
     int              retval = -1;
@@ -764,19 +1095,20 @@ show_conf_xpath(clicon_handle h,
     cg_var          *cv;
     cvec            *nsc = NULL;
     yang_stmt       *yspec;
-    
+    int              fromroot = 0;
+
     if (cvec_len(argv) != 1){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires one element to be <dbname>");
+        clixon_err(OE_PLUGIN, EINVAL, "Requires one element to be <dbname>");
         goto done;
     }
     if ((yspec = clicon_dbspec_yang(h)) == NULL){
-        clicon_err(OE_FATAL, 0, "No DB_SPEC");
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
         goto done;
     }
     dbname = cv_string_get(cvec_i(argv, 0));
     /* Look for xpath in command (kludge: cv must be called "xpath") */
     if ((cv = cvec_find(cvv, "xpath")) == NULL){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires one variable to be <xpath>");
+        clixon_err(OE_PLUGIN, EINVAL, "Requires one variable to be <xpath>");
         goto done;
     }
     xpath = cv_string_get(cv);
@@ -790,7 +1122,7 @@ show_conf_xpath(clicon_handle h,
     }
     if (cli_show_common(h, dbname, FORMAT_XML, 1, 0,
                         NULL, NULL,
-                        NULL, xpath, nsc, 0) < 0)
+                        NULL, xpath, fromroot, nsc, 0) < 0)
         goto done;
     retval = 0;
 done:
@@ -799,11 +1131,15 @@ done:
     return retval;
 }
 
-int cli_show_version(clicon_handle h,
-                     cvec         *vars,
-                     cvec         *argv)
+/*! Show clixon and CLIgen versions
+ */
+int
+cli_show_version(clixon_handle h,
+                 cvec         *cvv,
+                 cvec         *argv)
 {
-    fprintf(stdout, "%s\n", CLIXON_VERSION_STRING);
+    cligen_output(stdout, "Clixon: %s\n", CLIXON_VERSION);
+    cligen_output(stdout, "CLIgen: %s\n", CLIGEN_VERSION);
     return 0;
 }
 
@@ -816,15 +1152,19 @@ int cli_show_version(clicon_handle h,
  * @param[in]  h     Clixon handle
  * @param[in]  cvv   Vector of variables from CLIgen command-line
  * @param[in]  argv  String vector of show options, format:
- *   <api_path_fmt>  Generated API PATH (this is added implicitly, not actually given in the cvv)
+ *   <api_path_fmt>  Generated API PATH (this is added implicitly, not actually given in argv)
+ *  [<mt-point>]     Optional YANG path-arg/xpath from mount-point
  *   <dbname>        Name of datastore, such as "running"
  * -- from here optional:
- *   <format>        "text"|"xml"|"json"|"cli"|"netconf" (see format_enum), default: xml
+ *   <format>        text|xml|json|cli|netconf|default (see format_enum), default: xml
  *   <pretty>        true|false: pretty-print or not
  *   <state>         true|false: also print state
  *   <default>       Retrieval mode: report-all, trim, explicit, report-all-tagged, 
  *                   NULL, report-all-tagged-default, report-all-tagged-strip (extended)
  *   <prepend>       CLI prefix: prepend before cli syntax output
+ *   <fromroot>      true|false: Show from root
+ * @retval     0     OK
+ * @retval    -1     Error
  * @code
  *   clispec: 
  *      show config @datamodelshow, cli_show_auto("candidate", "xml");
@@ -840,9 +1180,10 @@ int cli_show_version(clicon_handle h,
  * @see cli_show_auto_mode  autocli with edit menu support
  *
  * XXX merge cli_show_auto and cli_show_auto_mode
+ * @see cli_callback_generate where api_path_fmt + mt-point are generated
  */
-int 
-cli_show_auto(clicon_handle h,
+int
+cli_show_auto(clixon_handle h,
               cvec         *cvv,
               cvec         *argv)
 {
@@ -857,19 +1198,29 @@ cli_show_auto(clicon_handle h,
     char            *extdefault = NULL; /* with extended tagged modes */
     int              argc = 0;
     char            *xpath = NULL;
-    yang_stmt       *yspec;
+    yang_stmt       *yspec0;
     char            *api_path = NULL;
     int              cvvi = 0;
     char            *api_path_fmt;  /* xml key format */
+    char            *api_path_fmt01 = NULL;
+    char            *str;
+    char            *mtpoint = NULL;
+    int              fromroot = 0;
 
-    if (cvec_len(argv) < 2 || cvec_len(argv) > 7){
-        clicon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected:: <api-path-fmt>* <database> [<format> <pretty> <state> <default> <prepend>]", cvec_len(argv));
+    if (cvec_len(argv) < 2 || cvec_len(argv) > 9){
+        clixon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected:: <api-path-fmt>* <database> [<format> <pretty> <state> <default> <prepend> <fromroot>]", cvec_len(argv));
         goto done;
     }
     api_path_fmt = cv_string_get(cvec_i(argv, argc++));
-    dbname = cv_string_get(cvec_i(argv, argc++));
+    str = cv_string_get(cvec_i(argv, argc++));
+    if (str && strncmp(str, "mtpoint:", strlen("mtpoint:")) == 0){
+        mtpoint = str + strlen("mtpoint:");
+        dbname = cv_string_get(cvec_i(argv, argc++));
+    }
+    else
+        dbname = str;
     if (cvec_len(argv) > argc)
-        if (cli_show_option_format(argv, argc++, &format) < 0)
+        if (cli_show_option_format(h, argv, argc++, &format) < 0)
             goto done;
     if (cvec_len(argv) > argc){
         if (cli_show_option_bool(argv, argc++, &pretty) < 0)
@@ -888,24 +1239,39 @@ cli_show_auto(clicon_handle h,
     if (cvec_len(argv) > argc){
         prepend = cv_string_get(cvec_i(argv, argc++));
     }
-    if ((yspec = clicon_dbspec_yang(h)) == NULL){
-        clicon_err(OE_FATAL, 0, "No DB_SPEC");
+    if (cvec_len(argv) > argc){
+        if (cli_show_option_bool(argv, argc++, &fromroot) < 0)
+            goto done;
+    }
+    if ((yspec0 = clicon_dbspec_yang(h)) == NULL){
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
         goto done;
     }
-    if (api_path_fmt2api_path(api_path_fmt, cvv, &api_path, &cvvi) < 0)
-        goto done;
-    if (api_path2xpath(api_path, yspec, &xpath, &nsc, NULL) < 0)
+    if (mtpoint){
+        /* Get and combined api-path01 */
+        if (mtpoint_paths(yspec0, mtpoint, api_path_fmt, &api_path_fmt01) < 0)
+            goto done;
+        if (api_path_fmt2api_path(api_path_fmt01, cvv, yspec0, &api_path, &cvvi) < 0)
+            goto done;
+    }
+    else{
+        if (api_path_fmt2api_path(api_path_fmt, cvv, yspec0, &api_path, &cvvi) < 0)
+            goto done;
+    }
+    if (api_path2xpath(api_path, yspec0, &xpath, &nsc, NULL) < 0)
         goto done;
     if (xpath == NULL){
-        clicon_err(OE_FATAL, 0, "Invalid api-path-fmt: %s", api_path_fmt);
+        clixon_err(OE_FATAL, 0, "Invalid api-path: %s", api_path);
         goto done;
     }
     if (cli_show_common(h, dbname, format, pretty, state,
                         withdefault, extdefault,
-                        prepend, xpath, nsc, 0) < 0)
+                        prepend, xpath, fromroot, nsc, 0) < 0)
         goto done;
     retval = 0;
  done:
+    if (api_path_fmt01)
+        free(api_path_fmt01);
     if (nsc)
         xml_nsctx_free(nsc);
     if (xpath)
@@ -931,7 +1297,10 @@ cli_show_auto(clicon_handle h,
  *   <default>       Retrieval mode: report-all, trim, explicit, report-all-tagged, 
  *                   NULL, report-all-tagged-default, report-all-tagged-strip (extended)
  *   <prepend>       CLI prefix: prepend before cli syntax output
- * @code
+ * @retval     0     OK
+ * @retval    -1     Error
+ * @cli_show_auto_ctrl
+code
  *   clispec:
  *      show config, cli_show_auto_mode("candidate");
  *   cli run:
@@ -945,11 +1314,9 @@ cli_show_auto(clicon_handle h,
  * @endcode
  * @see cli_show_auto    autocli with expansion 
  * @see cli_show_config  with no autocli coupling
- *
- * XXX merge cli_show_auto and cli_show_auto_mode
  */
 int
-cli_show_auto_mode(clicon_handle h,
+cli_show_auto_mode(clixon_handle h,
                    cvec         *cvv,
                    cvec         *argv)
 {
@@ -965,16 +1332,27 @@ cli_show_auto_mode(clicon_handle h,
     int              argc = 0;
     int              skiptop = 0;
     char            *xpath = NULL;
+    yang_stmt       *yspec0;
     yang_stmt       *yspec;
     char            *api_path = NULL;
-    
+    char            *mtpoint = NULL;
+    yang_stmt       *yu;
+    cbuf            *cbxpath = NULL;
+    cvec            *nsc0 = NULL;
+    cg_var          *cv;
+    int              fromroot = 0;
+
     if (cvec_len(argv) < 2 || cvec_len(argv) > 7){
-        clicon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected: <database> [ <format> <pretty> <state> <default> <cli-prefix>]", cvec_len(argv));
+        clixon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected: <database> [ <format> <pretty> <state> <default> <cli-prefix>]", cvec_len(argv));
+        goto done;
+    }
+    if ((yspec0 = clicon_dbspec_yang(h)) == NULL){
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
         goto done;
     }
     dbname = cv_string_get(cvec_i(argv, argc++));
     if (cvec_len(argv) > argc)
-        if (cli_show_option_format(argv, argc++, &format) < 0)
+        if (cli_show_option_format(h, argv, argc++, &format) < 0)
             goto done;
     if (cvec_len(argv) > argc){
         if (cli_show_option_bool(argv, argc++, &pretty) < 0)
@@ -998,23 +1376,49 @@ cli_show_auto_mode(clicon_handle h,
         ;
     else
         api_path = "/";
-    if ((yspec = clicon_dbspec_yang(h)) == NULL){
-        clicon_err(OE_FATAL, 0, "No DB_SPEC");
-        goto done;
+    if (clicon_data_get(h, "cli-edit-mtpoint", &mtpoint) == 0 && strlen(mtpoint)){
+        if (yang_path_arg(yspec0, mtpoint, &yu) < 0)
+            goto done;
+        if (yang_mount_get(yu, mtpoint, &yspec) < 0)
+            goto done;
     }
+    yspec = yspec0;
     if (api_path2xpath(api_path, yspec, &xpath, &nsc, NULL) < 0)
         goto done;
     if (xpath == NULL){
-        clicon_err(OE_FATAL, 0, "Invalid api-path: %s", api_path);
+        clixon_err(OE_FATAL, 0, "Invalid api-path: %s", api_path);
         goto done;
     }
+    if ((cbxpath = cbuf_new()) == NULL){
+        clixon_err(OE_UNIX, errno, "cbuf_new");
+        goto done;
+    }
+    if (mtpoint){
+        /*
+         * XXX disabled the line below, because otherwise the path up to the
+         * mount point would be added twice to cbxpath. This is because the
+         * api_path and thus also the xpath already include the path up to the
+         * mount point. (at least since cli_auto_edit() was changed)
+         */
+        //cprintf(cbxpath, "%s", mtpoint);
+        if (xml_nsctx_yangspec(yspec0, &nsc0) < 0)
+            goto done;
+        cv = NULL;      /* Append cvv1 to cvv2 */
+        while ((cv = cvec_each(nsc0, cv)) != NULL)
+            cvec_append_var(nsc, cv);
+    }
+    cprintf(cbxpath, "%s", xpath);
     skiptop = (strcmp(xpath,"/") != 0);
     if (cli_show_common(h, dbname, format, pretty, state,
                         withdefault, extdefault,
-                        prepend, xpath, nsc, skiptop) < 0)
+                        prepend, cbuf_get(cbxpath), fromroot, nsc, skiptop) < 0)
         goto done;
     retval = 0;
  done:
+    if (nsc0)
+        cvec_free(nsc0);
+    if (cbxpath)
+        cbuf_free(cbxpath);
     if (nsc)
         xml_nsctx_free(nsc);
     if (xpath)
@@ -1022,46 +1426,17 @@ cli_show_auto_mode(clicon_handle h,
     return retval;
 }
 
-#if 1 // OBSOLETE
-/*! Obsolete Show configuration callback for autocli edit modes using tree working point
- *
- * @note Please use cli_show_auto_mode instead,
- * but since that function does not use treename(argv[0]) that must be stripped
- */
-int 
-cli_auto_show(clicon_handle h,
-              cvec         *cvv,
-              cvec         *argv0)
-{
-    int    retval = -1;
-    cvec  *argv1 = NULL;
-    cg_var *cv;
-
-    if ((argv1 = cvec_new(0)) == NULL){
-        clicon_err(OE_UNIX, errno, "cvec_new");
-        goto done;
-    }
-    cv = NULL;
-    while ((cv = cvec_each1(argv0, cv)) != NULL) {
-        if (cvec_append_var(argv1, cv) == NULL){
-            clicon_err(OE_UNIX, errno, "cvec_append_var");
-            goto done;
-        }
-    }
-    if (cli_show_auto_mode(h, cvv, argv1) < 0)
-        goto done;
-    retval = 0;
- done:
-    if (argv1)
-        cvec_free(argv1);
-    return retval;
-}
-#endif
-
 /*! Show clixon configuration options as loaded
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv  Vector of command variables
+ * @param[in]  argv  
+ * @retval     0    OK
+ * @retval    -1    Error
+'* @see clicon_option_dump clicon_option_dump1
  */
-int 
-cli_show_options(clicon_handle h,
+int
+cli_show_options(clixon_handle h,
                  cvec         *cvv,
                  cvec         *argv)
 {
@@ -1073,7 +1448,7 @@ cli_show_options(clicon_handle h,
     size_t         klen;
     size_t         vlen;
     cxobj         *x = NULL;
-    
+
     if (clicon_hash_keys(hash, &keys, &klen) < 0)
         goto done;
     for(i = 0; i < klen; i++) {
@@ -1116,18 +1491,21 @@ cli_show_options(clicon_handle h,
 }
 
 /*! Show pagination
- * @param[in]  h    Clicon handle
+ *
+ * @param[in]  h    Clixon handle
  * @param[in]  cvv  Vector of cli string and instantiated variables 
  * @param[in]  argv Vector. Format: <xpath> <prefix> <namespace> <format> <limit>
+ * @retval     0    OK
+ * @retval    -1    Error
  * Also, if there is a cligen variable called "xpath" it will override argv xpath arg
  */
 int
-cli_pagination(clicon_handle h,
+cli_pagination(clixon_handle h,
                cvec         *cvv,
                cvec         *argv)
 {
     int              retval = -1;
-    cbuf            *cb = NULL;    
+    cbuf            *cb = NULL;
     char            *xpath = NULL;
     char            *prefix = NULL;
     char            *namespace = NULL;
@@ -1144,31 +1522,30 @@ cli_pagination(clicon_handle h,
     cxobj          **xvec = NULL;
     size_t           xlen;
     int              locked = 0;
-    
+    int              argc = 0;
+
     if (cvec_len(argv) != 5){
-        clicon_err(OE_PLUGIN, 0, "Expected usage: <xpath> <prefix> <namespace> <format> <limit>");
+        clixon_err(OE_PLUGIN, 0, "Expected usage: <xpath> <prefix> <namespace> <format> <limit>");
         goto done;
     }
     /* prefix:variable overrides argv */
     if ((cv = cvec_find(cvv, "xpath")) != NULL)
         xpath = cv_string_get(cv);
     else
-        xpath = cvec_i_str(argv, 0);
-    prefix = cvec_i_str(argv, 1);
-    namespace = cvec_i_str(argv, 2);
-    str = cv_string_get(cvec_i(argv, 3));     /* Fourthformat: output format */
-    if ((int)(format = format_str2int(str)) < 0){
-        clicon_err(OE_PLUGIN, 0, "Not valid format: %s", str);
+        xpath = cvec_i_str(argv, argc);
+    argc++;
+    prefix = cvec_i_str(argv, argc++);
+    namespace = cvec_i_str(argv, argc++);
+    if (cli_show_option_format(h, argv, argc++, &format) < 0)
         goto done;
-    }
     if ((str = cv_string_get(cvec_i(argv, 4))) != NULL){
         if (parse_uint32(str, &limit, NULL) < 1){
-            clicon_err(OE_UNIX, errno, "error parsing limit:%s", str);
+            clixon_err(OE_UNIX, errno, "error parsing limit:%s", str);
             goto done;
         }
     }
     if (limit == 0){
-        clicon_err(OE_UNIX, EINVAL, "limit is 0");
+        clixon_err(OE_UNIX, EINVAL, "limit is 0");
         goto done;
     }
     if ((nsc = xml_nsctx_init(prefix, namespace)) == NULL)
@@ -1188,7 +1565,7 @@ cli_pagination(clicon_handle h,
             goto done;
         }
         if ((xerr = xpath_first(xret, NULL, "/rpc-error")) != NULL){
-            clixon_netconf_error(xerr, "Get configuration", NULL);
+            clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Get configuration");
             goto done;
         }
         if (xpath_vec(xret, nsc, "%s", &xvec, &xlen, xpath) < 0)
@@ -1197,15 +1574,15 @@ cli_pagination(clicon_handle h,
             xc = xvec[j];
             switch (format){
             case FORMAT_XML:
-                if (clixon_xml2file(stdout, xc, 0, 1, cligen_output, 0, 1) < 0)
+                if (clixon_xml2file(stdout, xc, 0, 1, NULL, cligen_output, 0, 1) < 0)
                     goto done;
                 break;
             case FORMAT_JSON:
-                if (clixon_json2file(stdout, xc, 1, cligen_output, 0, 1) < 0)
+                if (clixon_json2file(stdout, xc, 1, cligen_output, 0, 1, 0) < 0)
                     goto done;
                 break;
             case FORMAT_TEXT:
-                if (clixon_txt2file(stdout, xc, 0, cligen_output, 0, 1) < 0)
+                if (clixon_text2file(stdout, xc, 0, cligen_output, 0, 1) < 0)
                     goto done;
                 break;
             case FORMAT_CLI:
@@ -1247,32 +1624,34 @@ cli_pagination(clicon_handle h,
     return retval;
 }
 
-/*! Translate from XML to CLI commands, internal
+/*! Translate to CLI commands in cbuf
  *
  * Howto: join strings and pass them down. 
  * Identify unique/index keywords for correct set syntax.
- * @param[in] h        Clicon handle
- * @param[in] f        Output FILE (eg stdout)
- * @param[in] xn       XML Parse-tree (to translate)
- * @param[in] prepend  Print this text in front of all commands.
- * @param[in] fn       Callback to make print function
+ * @param[in]     h       Clixon handle
+ * @param[in,out] cb      Cligen buffer to write to
+ * @param[in]     xn      XML Parse-tree (to translate)
+ * @param[in]     prepend Print this text in front of all commands.
+ * @retval        0       OK
+ * @retval       -1       Error
+ * @see clixon_cli2file
  */
 static int
-xml2cli1(clicon_handle     h,
-         FILE             *f, 
+cli2cbuf(clixon_handle     h,
+         cbuf             *cb,
          cxobj            *xn,
-         char             *prepend,
-         clicon_output_cb *fn)
+         char             *prepend)
 {
-    int        retval = -1;
-    cxobj     *xe = NULL;
-    cbuf      *cbpre = NULL;
-    yang_stmt *ys;
-    int        match;
-    char      *body;
-    int        compress = 0;
+    int              retval = -1;
+    cxobj           *xe = NULL;
+    cbuf            *cbpre = NULL;
+    yang_stmt       *ys;
+    int              match;
+    char            *body;
+    int              compress = 0;
     autocli_listkw_t listkw;
-    int           exist = 0;
+    int              exist = 0;
+    char            *name;
 
     if (autocli_list_keyword(h, &listkw) < 0)
         goto done;
@@ -1284,13 +1663,147 @@ xml2cli1(clicon_handle     h,
         goto done;
     if (exist)
         goto ok;
+    exist = 0;
+    if (yang_extension_value(ys, "alias", CLIXON_AUTOCLI_NS, &exist, &name) < 0)
+        goto done;
+    if (!exist)
+        name = xml_name(xn);
+    /* If leaf/leaf-list or presence container, then print line */
+    if (yang_keyword_get(ys) == Y_LEAF ||
+        yang_keyword_get(ys) == Y_LEAF_LIST){
+        if (prepend)
+            cprintf(cb, "%s", prepend);
+        if (listkw != AUTOCLI_LISTKW_NONE)
+            cprintf(cb, "%s ", name);
+        if ((body = xml_body(xn)) != NULL){
+            if (index(body, ' '))
+                cprintf(cb, "\"%s\"", body);
+            else
+                cprintf(cb, "%s", body);
+        }
+        cprintf(cb, "\n");
+        goto ok;
+    }
+    /* Create prepend variable string */
+    if ((cbpre = cbuf_new()) == NULL){
+        clixon_err(OE_PLUGIN, errno, "cbuf_new");
+        goto done;
+    }
+    if (prepend)
+        cprintf(cbpre, "%s", prepend);
+
+    /* If non-presence container && HIDE mode && only child is 
+     * a list, then skip container keyword
+     * See also yang2cli_container */
+    if (autocli_compress(h, ys, &compress) < 0)
+        goto done;
+    if (!compress)
+        cprintf(cbpre, "%s ", xml_name(xn));
+
+    /* If list then first loop through keys */
+    if (yang_keyword_get(ys) == Y_LIST){
+        xe = NULL;
+        while ((xe = xml_child_each(xn, xe, -1)) != NULL){
+            if ((match = yang_key_match(ys, xml_name(xe), NULL)) < 0)
+                goto done;
+            if (!match)
+                continue;
+            if (listkw == AUTOCLI_LISTKW_ALL)
+                cprintf(cbpre, "%s ", xml_name(xe));
+            cprintf(cbpre, "%s ", xml_body(xe));
+        }
+    }
+    else if ((yang_keyword_get(ys) == Y_CONTAINER) &&
+             yang_find(ys, Y_PRESENCE, NULL) != NULL){
+        /* If presence container, then print as leaf (but continue to children) */
+        if (prepend)
+            cprintf(cb, "%s", prepend);
+        if (listkw != AUTOCLI_LISTKW_NONE)
+            cprintf(cb, "%s ", xml_name(xn));
+        if ((body = xml_body(xn)) != NULL){
+            if (index(body, ' '))
+                cprintf(cb, "\"%s\"", body);
+            else
+                cprintf(cb, "%s", body);
+        }
+        cprintf(cb, "\n");
+    }
+
+    /* For lists, print cbpre before its elements */
+    if (yang_keyword_get(ys) == Y_LIST)
+        cprintf(cb, "%s\n", cbuf_get(cbpre));
+    /* Then loop through all other (non-keys) */
+    xe = NULL;
+    while ((xe = xml_child_each(xn, xe, -1)) != NULL){
+        if (yang_keyword_get(ys) == Y_LIST){
+            if ((match = yang_key_match(ys, xml_name(xe), NULL)) < 0)
+                goto done;
+            if (match)
+                continue; /* Not key itself */
+        }
+        if (cli2cbuf(h, cb, xe, cbuf_get(cbpre)) < 0)
+            goto done;
+    }
+ ok:
+    retval = 0;
+ done:
+    if (cbpre)
+        cbuf_free(cbpre);
+    return retval;
+}
+
+/*! Translate from XML to CLI commands, internal
+ *
+ * Howto: join strings and pass them down. 
+ * Identify unique/index keywords for correct set syntax.
+ * @param[in] h        Clixon handle
+ * @param[in] f        Output FILE (eg stdout)
+ * @param[in] xn       XML Parse-tree (to translate)
+ * @param[in] prepend  Print this text in front of all commands.
+ * @param[in] fn       Callback to make print function
+ * @retval    0        OK
+ * @retval   -1        Error
+ */
+static int
+cli2file(clixon_handle     h,
+         FILE             *f,
+         cxobj            *xn,
+         char             *prepend,
+         clicon_output_cb *fn)
+{
+    int              retval = -1;
+    cxobj           *xe = NULL;
+    cbuf            *cbpre = NULL;
+    yang_stmt       *ys;
+    int              match;
+    char            *body;
+    int              compress = 0;
+    autocli_listkw_t listkw;
+    int              exist = 0;
+    char            *name;
+
+    if (autocli_list_keyword(h, &listkw) < 0)
+        goto done;
+    if (xml_type(xn)==CX_ATTR)
+        goto ok;
+    if ((ys = xml_spec(xn)) == NULL)
+        goto ok;
+    if (yang_extension_value(ys, "hide-show", CLIXON_AUTOCLI_NS, &exist, NULL) < 0)
+        goto done;
+    if (exist)
+        goto ok;
+    exist = 0;
+    if (yang_extension_value(ys, "alias", CLIXON_AUTOCLI_NS, &exist, &name) < 0)
+        goto done;
+    if (!exist)
+        name = xml_name(xn);
     /* If leaf/leaf-list or presence container, then print line */
     if (yang_keyword_get(ys) == Y_LEAF ||
         yang_keyword_get(ys) == Y_LEAF_LIST){
         if (prepend)
             (*fn)(f, "%s", prepend);
         if (listkw != AUTOCLI_LISTKW_NONE)
-            (*fn)(f, "%s ", xml_name(xn));
+            (*fn)(f, "%s ", name);
         if ((body = xml_body(xn)) != NULL){
             if (index(body, ' '))
                 (*fn)(f, "\"%s\"", body);
@@ -1302,7 +1815,7 @@ xml2cli1(clicon_handle     h,
     }
     /* Create prepend variable string */
     if ((cbpre = cbuf_new()) == NULL){
-        clicon_err(OE_PLUGIN, errno, "cbuf_new");       
+        clixon_err(OE_PLUGIN, errno, "cbuf_new");
         goto done;
     }
     if (prepend)
@@ -1347,7 +1860,7 @@ xml2cli1(clicon_handle     h,
 
     /* For lists, print cbpre before its elements */
     if (yang_keyword_get(ys) == Y_LIST)
-        (*fn)(f, "%s\n", cbuf_get(cbpre));      
+        (*fn)(f, "%s\n", cbuf_get(cbpre));
     /* Then loop through all other (non-keys) */
     xe = NULL;
     while ((xe = xml_child_each(xn, xe, -1)) != NULL){
@@ -1357,7 +1870,7 @@ xml2cli1(clicon_handle     h,
             if (match)
                 continue; /* Not key itself */
         }
-        if (xml2cli1(h, f, xe, cbuf_get(cbpre), fn) < 0)
+        if (cli2file(h, f, xe, cbuf_get(cbpre), fn) < 0)
             goto done;
     }
  ok:
@@ -1372,7 +1885,7 @@ xml2cli1(clicon_handle     h,
  *
  * Howto: join strings and pass them down. 
  * Identify unique/index keywords for correct set syntax.
- * @param[in] h        Clicon handle
+ * @param[in] h        Clixon handle
  * @param[in] f        Output FILE (eg stdout)
  * @param[in] xn       XML Parse-tree (to translate)
  * @param[in] prepend  Print this text in front of all commands.
@@ -1380,10 +1893,11 @@ xml2cli1(clicon_handle     h,
  * @param[in] skiptop  0: Include top object 1: Skip top-object, only children, 
  * @retval    0        OK
  * @retval   -1        Error
+ * @see clixon_cli2cbuf
  */
 int
-clixon_cli2file(clicon_handle     h,
-                FILE             *f, 
+clixon_cli2file(clixon_handle     h,
+                FILE             *f,
                 cxobj            *xn,
                 char             *prepend,
                 clicon_output_cb *fn,
@@ -1397,14 +1911,383 @@ clixon_cli2file(clicon_handle     h,
     if (skiptop){
         xc = NULL;
         while ((xc = xml_child_each(xn, xc, CX_ELMNT)) != NULL)
-            if (xml2cli1(h, f, xc, prepend, fn) < 0)
+            if (cli2file(h, f, xc, prepend, fn) < 0)
                 goto done;
     }
     else {
-        if (xml2cli1(h, f, xn, prepend, fn) < 0)
+        if (cli2file(h, f, xn, prepend, fn) < 0)
             goto done;
     }
     retval = 0;
  done:
     return retval;
+}
+
+/*! Translate from XML to CLI commands
+ *
+ * Howto: join strings and pass them down. 
+ * Identify unique/index keywords for correct set syntax.
+ * @param[in] h        Clixon handle
+ * @param[in] f        Output FILE (eg stdout)
+ * @param[in] xn       XML Parse-tree (to translate)
+ * @param[in] prepend  Print this text in front of all commands.
+ * @param[in] fn       File print function (if NULL, use fprintf)
+ * @param[in] skiptop  0: Include top object 1: Skip top-object, only children, 
+ * @retval    0        OK
+ * @retval   -1        Error
+ * @see clixon_cli2file
+ */
+int
+clixon_cli2cbuf(clixon_handle     h,
+                cbuf             *cb,
+                cxobj            *xn,
+                char             *prepend,
+                int               skiptop)
+{
+    int   retval = 1;
+    cxobj *xc;
+
+    if (skiptop){
+        xc = NULL;
+        while ((xc = xml_child_each(xn, xc, CX_ELMNT)) != NULL)
+            if (cli2cbuf(h, cb, xc, prepend) < 0)
+                goto done;
+    }
+    else {
+        if (cli2cbuf(h, cb, xn, prepend) < 0)
+            goto done;
+    }
+    retval = 0;
+ done:
+    return retval;
+}
+
+/* Transform uin64 to KiB / MiB / GiB / TiB and postfix
+ *
+ * @param[in]  inr  Input number
+ * @param[out] onr  Translated number
+ * @param[out] unit Multiple byte unit: K/M/G/T
+ * @retval     0
+ */
+static int
+translatenumber(uint64_t   inr,
+                uint64_t  *onr,
+                char     **unit)
+{
+    if (inr/(10*1024) == 0) {
+        *onr = inr;
+        *unit = "";
+    }
+    else if (inr/(10LL*1024LL*1024LL*1024LL*1024LL) != 0) {
+        *onr = inr/(1024LL*1024LL*1024LL*1024LL);
+        *unit = "T";
+    }
+    else if (inr/(10LL*1024LL*1024LL*1024LL) != 0) {
+        *onr = inr/(1024LL*1024LL*1024LL);
+        *unit = "G";
+    }
+    else if (inr/(10LL*1024LL*1024LL) != 0) {
+        *onr = inr/(1024LL*1024LL);
+        *unit = "M";
+    }
+    else if (inr/(10LL*1024LL) != 0) {
+        *onr = inr/(1024LL);
+        *unit = "K";
+    }
+    else{
+        *onr = inr;
+        *unit = "";
+    }
+    return 0;
+}
+
+/*! CLI callback show memory statistics (and numbers)
+ *
+ * mempry in KiB
+ * @param[in]  h     Clixon handle
+ * @param[in]  cvv   Vector of cli string and instantiated variables
+ * @param[in]  argv  Arguments given at the callback: [(cli|backend|all) [detail]]
+ * @retval     0     OK
+ * @retval    -1     Error
+ */
+int
+cli_show_statistics(clixon_handle h,
+                    cvec         *cvv,
+                    cvec         *argv)
+{
+    int         retval = -1;
+    cbuf       *cb = NULL;
+    cxobj      *xret = NULL;
+    cxobj      *xerr;
+    char       *what = NULL;
+    int         cli = 0;
+    int         backend = 0;
+    int         detail = 0;
+    pt_head    *ph;
+    parse_tree *pt;
+    uint64_t    nr;
+    uint64_t    tnr0;
+    uint64_t    tnr = 0;
+    size_t      sz;
+    size_t      tsz0;
+    size_t      tsz = 0;
+    yang_stmt  *ymounts;
+    yang_stmt  *ydomain;
+    yang_stmt  *yspec;
+    cg_var     *cv;
+    cxobj      *xp;
+    char       *domain;
+    char       *name;
+    cxobj      *x;
+    uint64_t    u64;
+    char       *unit;
+    int         inext;
+    int         inext2;
+
+    if (argv == NULL || (cvec_len(argv) < 1 || cvec_len(argv) > 2)){
+        clixon_err(OE_PLUGIN, EINVAL, "Expected arguments: [(cli|backend|all) [detail]]");
+        goto done;
+    }
+    cv = cvec_i(argv, 0);
+    what = cv_string_get(cv);
+    if (strcmp(what, "cli") == 0)
+        cli++;
+    else if (strcmp(what, "backend") == 0)
+        backend++;
+    else if (strcmp(what, "all") == 0){
+        cli++;
+        backend++;
+    }
+    else {
+        clixon_err(OE_PLUGIN, EINVAL, "Unexpected argument: %s, expected: cli|backend|all", what);
+        goto done;
+    }
+    if (cvec_len(argv) > 1 &&
+        (cv = cvec_i(argv, 1)) != NULL){
+        if (strcmp(cv_string_get(cv), "detail") != 0){
+            clixon_err(OE_PLUGIN, EINVAL, "Unexpected argument: %s, expected: detail",
+                       cv_string_get(cv));
+            goto done;
+        }
+        detail = 1;
+    }
+    if ((cb = cbuf_new()) == NULL){
+        clixon_err(OE_PLUGIN, errno, "cbuf_new");
+        goto done;
+    }
+    if ((ymounts = clixon_yang_mounts_get(h)) == NULL){
+        clixon_err(OE_YANG, ENOENT, "Top-level yang mounts not found");
+        goto done;
+    }
+    if (cli) {
+        if (backend)
+            cligen_output(stdout, "CLI:\n====\n");
+        if (!detail) {
+            cligen_output(stdout, "%-25s %-10s\n", "YANG", "Mem");
+        }
+        inext = 0;
+        while ((ydomain = yn_iter(ymounts, &inext)) != NULL) {
+            domain = yang_argument_get(ydomain);
+            inext2 = 0;
+            while ((yspec = yn_iter(ydomain, &inext2)) != NULL) {
+                name = yang_argument_get(yspec);
+                nr = 0; sz = 0;
+                if (yang_stats(yspec, 0, &nr, &sz) < 0)
+                    goto done;
+                tnr += nr;
+                tsz += sz;
+                if (detail) {
+                    cligen_output(stdout, "YANG-%s-%s-size: %" PRIu64 "\n", domain, name, sz);
+                    cligen_output(stdout, "YANG-%s-%s-nr: %" PRIu64 "\n", domain, name, nr);
+                }
+                else{
+                    translatenumber(sz, &u64, &unit);
+                    cprintf(cb, "%s/%s", domain, name);
+                    cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", cbuf_get(cb), u64, unit);
+                    cbuf_reset(cb);
+                }
+            }
+        }
+        if (detail){
+            cligen_output(stdout, "YANG-total-size: %" PRIu64 "\n", tsz);
+            cligen_output(stdout, "YANG-total-nr: %" PRIu64 "\n", tnr);
+        }
+        else {
+            translatenumber(tsz, &u64, &unit);
+            cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", "YANG Total", u64, unit);
+        }
+        if (!detail) {
+            cligen_output(stdout, "%-25s\n", "CLIspec");
+        }
+        tnr0 = tnr;
+        tsz0 = tsz;
+        tnr = 0;
+        tsz = 0;
+        ph = NULL;
+        while ((ph = cligen_ph_each(cli_cligen(h), ph)) != NULL) {
+            if ((pt = cligen_ph_parsetree_get(ph)) == NULL)
+                continue;
+            nr = 0; sz = 0;
+            pt_stats(pt, &nr, &sz);
+            tnr += nr;
+            tsz += sz;
+            if (detail){
+                cligen_output(stdout, "CLIspec-%s-size: %" PRIu64 "\n", cligen_ph_name_get(ph), sz);
+                cligen_output(stdout, "CLIspec-%s-nr: %" PRIu64 "\n", cligen_ph_name_get(ph), nr);
+            }
+        }
+        if (detail){
+            cligen_output(stdout, "CLIspec-total-size: %" PRIu64 "\n", tsz);
+            cligen_output(stdout, "CLIspec-total-nr: %" PRIu64 "\n", tnr);
+            cligen_output(stdout, "Mem-Total-size: %" PRIu64 "\n", tsz0+tsz);
+            cligen_output(stdout, "Mem-Total-nr: %" PRIu64 "\n", tnr0+tnr);
+        }
+        else {
+            translatenumber(tsz, &u64, &unit);
+            cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", "CLIspec Total", u64, unit);
+            translatenumber(tsz0+tsz, &u64, &unit);
+            cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", "Mem Total", u64, unit);
+        }
+    }
+    if (backend) {
+        if (cli)
+            cligen_output(stdout, "\nBackend:\n========\n");
+        cprintf(cb, "<rpc xmlns=\"%s\"", NETCONF_BASE_NAMESPACE);
+        cprintf(cb, " %s", NETCONF_MESSAGE_ID_ATTR); /* XXX: use incrementing sequence */
+        cprintf(cb, ">");
+        cprintf(cb, "<stats xmlns=\"%s\">", CLIXON_LIB_NS);
+        if (detail)
+            cprintf(cb, "<modules>true</modules>");
+        cprintf(cb, "</stats>");
+        cprintf(cb, "</rpc>");
+        if (clicon_rpc_netconf(h, cbuf_get(cb), &xret, NULL) < 0)
+            goto done;
+        if ((xerr = xpath_first(xret, NULL, "//rpc-error")) != NULL){
+            clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Get configuration");
+            goto done;
+        }
+        if (xml_rootchild(xret, 0, &xret) < 0)
+            goto done;
+        if (detail) {
+            cligen_output(stdout, "Backend (nr nodes, size of mem\n");
+            if (clixon_xml2file(stdout, xret, 0, 1, NULL, cligen_output, 0, 1) < 0)
+                goto done;
+        }
+        else {
+            cligen_output(stdout, "%-25s %-10s\n", "Datastore", "Mem");
+            tsz = 0;
+            if ((xp = xml_find_type(xret, NULL, "datastores", CX_ELMNT)) != NULL){
+                x = NULL;
+                while ((x = xml_child_each(xp, x, CX_ELMNT)) != NULL) {
+                    if (strcmp(xml_name(x), "datastore") != 0)
+                        continue;
+                    parse_uint64(xml_find_body(x, "size"), &sz, NULL);
+                    tsz += sz;
+                    name = xml_find_body(x, "name");
+                    translatenumber(sz, &u64, &unit);
+                    if (strlen(name) > 25){
+                        cligen_output(stdout, "%s \\\n", name);
+                        cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", "", u64, unit);
+                    }
+                    else{
+                        cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", name, u64, unit);
+                    }
+                }
+            }
+            translatenumber(tsz, &u64, &unit);
+            cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", "XML Total", u64, unit);
+            tsz0 = tsz;
+            tsz = 0;
+            cligen_output(stdout, "%s\n", "YANG");
+            if ((xp = xml_find_type(xret, NULL, "module-sets", CX_ELMNT)) != NULL){
+                x = NULL;
+                while ((x = xml_child_each(xp, x, CX_ELMNT)) != NULL) {
+                    if (strcmp(xml_name(x), "module-set") != 0)
+                        continue;
+                    if ((name = xml_find_body(x, "name")) == NULL)
+                        continue;
+                    parse_uint64(xml_find_body(x, "size"), &sz, NULL);
+                    tsz += sz;
+                    translatenumber(sz, &u64, &unit);
+                    if (strlen(name) > 25){
+                        cligen_output(stdout, "%s\n", name);
+                        if (sz != 0){
+                            cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", "", u64, unit);
+                        }
+                    }
+                    else{
+                        cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", name, u64, unit);
+                    }
+                }
+            }
+            translatenumber(tsz, &u64, &unit);
+            cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", "YANG Total", u64, unit);
+            translatenumber(tsz0+tsz, &u64, &unit);
+            cligen_output(stdout, "%-25s %" PRIu64 "%-10s\n", "Mem Total", u64, unit);
+        }
+    }
+    retval = 0;
+ done:
+    if (xret)
+        xml_free(xret);
+    if (cb)
+        cbuf_free(cb);
+    return retval;
+}
+
+/*! CLI set default output format
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv  Vector of cli string and instantiated variables, expected: 1: format
+ * @param[in]  argv Vector, expected NULL
+ * @retval     0    OK
+ * @retval    -1    Error
+ * Format of argv:
+ *   <api-path-fmt> Generated
+ */
+int
+cli_format_set(clixon_handle h,
+               cvec         *cvv,
+               cvec         *argv)
+{
+    int              retval = -1;
+    cg_var          *cv;
+    char            *str;
+    enum format_enum fmt = FORMAT_XML;
+
+    if ((cv = cvec_find(cvv, "fmt")) == NULL){
+        clixon_err(OE_PLUGIN, EINVAL, "Requires one variable to be <format>");
+        goto done;
+    }
+    str = cv_string_get(cv);
+    if ((fmt = format_str2int(str)) < 0){
+        clixon_err(OE_PLUGIN, EINVAL, "Invalid format: %s", str);
+        goto done;
+    }
+    /* Alt make a int option/data */
+    retval = clicon_option_str_set(h, "CLICON_CLI_OUTPUT_FORMAT", str);
+ done:
+    return retval;
+}
+
+/*! CLI set default output format
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv  Vector of cli string and instantiated variables, expected: 1: format
+ * @param[in]  argv Vector, expected NULL
+ * @retval     0    OK
+ * @retval    -1    Error
+ * Format of argv:
+ *   <api-path-fmt> Generated
+ */
+int
+cli_format_show(clixon_handle h,
+               cvec         *cvv,
+               cvec         *argv)
+{
+    char *str;
+
+    str = clicon_option_str(h, "CLICON_CLI_OUTPUT_FORMAT");
+    cligen_output(stderr, "%s\n", str);
+    return 0;
 }

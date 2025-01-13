@@ -13,12 +13,6 @@ if [ ${ENABLE_NETSNMP} != "yes" ]; then
     if [ "$s" = $0 ]; then exit 0; else return 0; fi
 fi
 
-snmpd=$(type -p snmpd)
-snmpget="$(type -p snmpget) -On -c public -v2c localhost "
-snmpgetnext="$(type -p snmpgetnext) -On -c public -v2c localhost "
-snmptable="$(type -p snmptable) -c public -v2c localhost "
-snmpwalk="$(type -p snmpwalk) -c public -v2c localhost "
-
 cfg=$dir/conf_startup.xml
 fyang=$dir/clixon-example.yang
 fstate=$dir/state.xml
@@ -37,7 +31,7 @@ cat <<EOF > $cfg
   <CLICON_YANG_MAIN_FILE>$fyang</CLICON_YANG_MAIN_FILE>
   <CLICON_SOCK>$dir/$APPNAME.sock</CLICON_SOCK>
   <CLICON_BACKEND_DIR>/usr/local/lib/$APPNAME/backend</CLICON_BACKEND_DIR>
-  <CLICON_BACKEND_PIDFILE>/var/tmp/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_SNMP_AGENT_SOCK>unix:$SOCK</CLICON_SNMP_AGENT_SOCK>
   <CLICON_SNMP_MIB>IF-MIB</CLICON_SNMP_MIB>
@@ -186,7 +180,7 @@ function testinit(){
         sudo killall -q clixon_snmp
 
         new "Starting clixon_snmp"
-        start_snmp $cfg &
+        start_snmp $cfg
     fi
 
     new "wait snmp"
@@ -487,6 +481,10 @@ expectpart "$($snmpwalk IF-MIB::ifRcvAddressTable)" 0 "IF-MIB::ifRcvAddressAddre
            "IF-MIB::ifRcvAddressType.1.\"11:bb:cc:dd:ee:ff\" = INTEGER: other(1)" \
            "IF-MIB::ifRcvAddressType.2.\"aa:22:33:44:55:66\" = INTEGER: volatile(2)"
 
+# XXX with valgrind on backend this fails with:
+# Error in packet.
+# Reason: (genError) A general failure occured
+# Failed object: IF-MIB::ifName.2
 new "Walk ifXTable"
 expectpart "$($snmpwalk IF-MIB::ifXTable)" 0 "IF-MIB::ifName.1 = STRING: ifname1" \
            "IF-MIB::ifName.2 = STRING: ifname2"

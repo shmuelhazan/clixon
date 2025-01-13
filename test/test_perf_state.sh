@@ -31,6 +31,9 @@ fstate=$dir/state.xml
 
 # Define default restconfig config: RESTCONFIG
 RESTCONFIG=$(restconf_config none false)
+if [ $? -ne 0 ]; then
+    err1 "Error when generating certs"
+fi
 
 cat <<EOF > $cfg
 <clixon-config xmlns="http://clicon.org/config">
@@ -38,16 +41,16 @@ cat <<EOF > $cfg
   <CLICON_FEATURE>clixon-restconf:allow-auth-none</CLICON_FEATURE> <!-- Use auth-type=none -->
   <CLICON_YANG_DIR>${YANG_INSTALLDIR}</CLICON_YANG_DIR>
   <CLICON_YANG_MAIN_FILE>$fyang</CLICON_YANG_MAIN_FILE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/example/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_BACKEND_DIR>/usr/local/lib/$APPNAME/backend</CLICON_BACKEND_DIR>
   <CLICON_BACKEND_REGEXP>example_backend.so$</CLICON_BACKEND_REGEXP>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_XMLDB_PRETTY>false</CLICON_XMLDB_PRETTY>
   <CLICON_XMLDB_FORMAT>$format</CLICON_XMLDB_FORMAT>
   <CLICON_CLI_MODE>example</CLICON_CLI_MODE>
-  <CLICON_CLI_DIR>/usr/local/lib/example/cli</CLICON_CLI_DIR>
-  <CLICON_CLISPEC_DIR>/usr/local/lib/example/clispec</CLICON_CLISPEC_DIR>
+  <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
+  <CLICON_CLISPEC_DIR>/usr/local/lib/$APPNAME/clispec</CLICON_CLISPEC_DIR>
   <CLICON_CLI_LINESCROLLING>0</CLICON_CLI_LINESCROLLING>
   <CLICON_FEATURE>ietf-netconf:startup</CLICON_FEATURE>
   <CLICON_VALIDATE_STATE_XML>true</CLICON_VALIDATE_STATE_XML>
@@ -122,7 +125,7 @@ if [ $RC -ne 0 ]; then
 fi
 
 new "wait restconf"
-swait_restconf
+wait_restconf
 
 rpc="<rpc $DEFAULTNS><edit-config><target><candidate/></target><config>"
 rpc+="<interfaces xmlns=\"urn:example:clixon\"><a><name>foo</name><b>"
@@ -179,7 +182,7 @@ done } 2>&1 | awk '/real/ {print $2}'
 # CLI get
 cat <<EOF >> $fin
 edit interfaces a foo b interface e1
-show state xml
+show state
 EOF
 new "cli get test single req"
 expectpart "$($clixon_cli -F $fin -f $cfg)" 0 "<name>e1</name>" "<type>eth</type>" "<status>up</status>$"
@@ -187,7 +190,7 @@ expectpart "$($clixon_cli -F $fin -f $cfg)" 0 "<name>e1</name>" "<type>eth</type
 new "cli get $perfreq single reqs"
 { time -p for (( i=0; i<$perfreq; i++ )); do
     rnd=$(( ( RANDOM % $perfnr ) ))
-    $clixon_cli -1 -f $cfg show state xml interfaces a b interface e$rnd > /dev/null
+    $clixon_cli -1 -f $cfg show state interfaces a b interface e$rnd > /dev/null
 done } 2>&1 | awk '/real/ {print $2}'
 
 # Get config in one large get
@@ -199,7 +202,7 @@ new "restconf get large config"
 $TIMEFN curl $CURLOPTS -X GET $RCPROTO://localhost/restconf/data/example:interfaces/a=foo/b 2>&1 | awk '/real/ {print $2}'
 
 new "cli get large config"
-$TIMEFN $clixon_cli -1f $cfg show state xml interfaces a foo b 2>&1 | awk '/real/ {print $2}'
+$TIMEFN $clixon_cli -1f $cfg show state interfaces a foo b 2>&1 | awk '/real/ {print $2}'
 
 # mem test needs sleep here
 new "wait restconf"
@@ -222,14 +225,6 @@ if [ $BE -ne 0 ]; then
 fi
 
 rm -rf $dir
-
-# unset conditional parameters 
-unset format
-unset perfnr
-unset perfreq
-
-# Set by restconf_config
-unset RESTCONFIG
 
 new "endtest"
 endtest

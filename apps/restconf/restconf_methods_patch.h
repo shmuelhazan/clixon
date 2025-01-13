@@ -36,14 +36,13 @@
  * Restconf YANG PATCH implementation (RFC8072)
  */
 
-
 #ifndef _RESTCONF_METHODS_PATCH_H_
 #define _RESTCONF_METHODS_PATCH_H_
 
 /*
  * Prototypes
  */
-int api_data_yang_patch(clicon_handle h, void *req, char *api_path0,
+int api_data_yang_patch(clixon_handle h, void *req, char *api_path0,
                         int pi,
                         cvec *qvec, char *data,
                         int pretty, restconf_media media_in, restconf_media media_out,

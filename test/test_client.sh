@@ -27,6 +27,9 @@ fi
 
 # Define default restconfig config: RESTCONFIG
 RESTCONFIG=$(restconf_config none false)
+if [ $? -ne 0 ]; then
+    err1 "Error when generating certs"
+fi
 
 cat <<EOF > $cfg
 <clixon-config xmlns="http://clicon.org/config">
@@ -37,9 +40,9 @@ cat <<EOF > $cfg
   <CLICON_CLISPEC_DIR>/usr/local/lib/$APPNAME/clispec</CLICON_CLISPEC_DIR>
   <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
-  <CLICON_SOCK>/usr/local/var/$APPNAME/$APPNAME.sock</CLICON_SOCK>
+  <CLICON_SOCK>/usr/local/var/run/$APPNAME.sock</CLICON_SOCK>
   <CLICON_BACKEND_DIR>$pdir</CLICON_BACKEND_DIR>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
   <CLICON_XMLDB_FORMAT>$format</CLICON_XMLDB_FORMAT>
   $RESTCONFIG
@@ -75,22 +78,20 @@ cat<<EOF > $cfile
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <syslog.h> // debug
 
-#include <clixon/clixon_log.h> // debug
+#include <clixon/clixon_queue.h>
+#include <clixon/clixon_hash.h>
+#include <clixon/clixon_handle.h>
 #include <clixon/clixon_client.h>
 
 int
 main(int    argc,
      char **argv)
 {
-    int retval = -1;
+    int                  retval = -1;
     clixon_handle        h = NULL; /* clixon handle */
     clixon_client_handle ch = NULL; /* clixon client handle */
     int                  s;
-
-    clicon_log_init("client", LOG_DEBUG, CLICON_LOG_STDERR);  // debug
-    clicon_debug_init($debug, NULL);                          // debug
 
     /* Provide a clixon config-file, get a clixon handle */
     if ((h = clixon_client_init("$cfg")) == NULL)
@@ -99,7 +100,7 @@ main(int    argc,
     if ((ch = clixon_client_connect(h, CLIXON_CLIENT_NETCONF, NULL)) == NULL)
        return -1;
     s = clixon_client_socket_get(ch);
-    if (clixon_client_hello(s, 0) < 0)
+    if (clixon_client_hello(s, NULL, 0) < 0)
       return -1;
     /* Here are read functions depending on an example YANG 
      * (Need an example YANG and XML input to confd)
@@ -165,7 +166,7 @@ new "Check entries"
 expectpart "$(curl $CURLOPTS -X GET $RCPROTO://localhost/restconf/data/clixon-client:table -H 'Accept: application/yang-data+xml')" 0 "HTTP/$HVER 200" "$XML"
 
 new "Run $app"
-expectpart "$($app)" 0 '^42$'
+expectpart "$(sudo $app)" 0 '^42$'
 
 if [ $RC -ne 0 ]; then
     new "Kill restconf daemon"
@@ -182,12 +183,6 @@ if [ $BE -ne 0 ]; then
     # kill backend
     stop_backend -f $cfg
 fi
-
-# unset conditional parameters 
-unset format
-
-# Set by restconf_config
-unset RESTCONFIG
 
 rm -rf $dir
 

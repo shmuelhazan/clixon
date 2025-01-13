@@ -41,14 +41,14 @@ cat <<EOF > $cfg
   <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>/usr/local/var/$APPNAME</CLICON_XMLDB_DIR>
   <CLICON_STARTUP_MODE>init</CLICON_STARTUP_MODE>
-  <CLICON_MODULE_LIBRARY_RFC7895>false</CLICON_MODULE_LIBRARY_RFC7895>
 </clixon-config>
 EOF
 
-# Run script 
-#  CC=/usr/bin/afl-clang 
-sudo LD_PRELOAD="/usr/local/lib/desock.so" afl-fuzz -i input -o output -d -m $MEGS -- /usr/local/sbin/clixon_backend -Fs init -f $cfg
+# kill old
+sudo /usr/local/sbin/clixon_backend -Fz -f $cfg
 
-# Dryrun without afl:
-#echo "sudo LD_PRELOAD=\"/usr/local/lib/desock.so\" /usr/local/sbin/clixon_backend -Fs init -f ./conf.xml < input/1.xml"
+# Dryrun without afl (commit this for real run):
 #sudo LD_PRELOAD="/usr/local/lib/desock.so" /usr/local/sbin/clixon_backend -Fs init -f ./conf.xml < input/1.xml
+
+# Run script 
+sudo LD_PRELOAD="/usr/local/lib/desock.so" afl-fuzz -i input -o output -d -m $MEGS -- /usr/local/sbin/clixon_backend -Fs init -f $cfg

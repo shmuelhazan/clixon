@@ -37,6 +37,7 @@
  *   cli-edit-mode - This is the api-path of the current cli mode in the loaded yang context
  *   cli-edit-cvv  - These are the assigned cligen list of variables with values at the edit-mode
  *   cli-edit-filter - Label filters for this mode
+ *   cli-edit-mtpoint - If edit modes are used, which mountpoint to use if any
  */
 
 #ifdef HAVE_CONFIG_H
@@ -51,9 +52,7 @@
 #include <stdarg.h>
 #include <time.h>
 #include <ctype.h>
-
 #include <unistd.h>
-#include <dirent.h>
 #include <syslog.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -69,7 +68,7 @@
 /* cligen */
 #include <cligen/cligen.h>
 
-/* clicon */
+/* clixon */
 #include <clixon/clixon.h>
 
 #include "clixon_cli_api.h"
@@ -85,7 +84,7 @@ co2apipath(cg_obj *co)
     cg_callback *cb;
     cvec        *cvv;
     cg_var      *cv;
-    
+
     if (co == NULL)
         return NULL;
     if ((cb = co->co_callbacks) == NULL)
@@ -97,68 +96,60 @@ co2apipath(cg_obj *co)
     return cv_string_get(cv);
 }
 
-/* Append to cvv1 to cvv0
- * @note if cvv0 is non-null, the first element of cvv1 is skipped
- */
-static cvec*
-cvec_append(cvec *cvv0,
-            cvec *cvv1)
-{
-    cvec   *cvv2 = NULL;
-    cg_var *cv;
-    
-    if (cvv0 == NULL){
-        if ((cvv2 = cvec_dup(cvv1)) == NULL){
-            clicon_err(OE_UNIX, errno, "cvec_dup");
-            return NULL;
-        }
-    }
-    else{
-        if ((cvv2 = cvec_dup(cvv0)) == NULL){
-            clicon_err(OE_UNIX, errno, "cvec_dup");
-            return NULL;
-        }
-        cv = NULL;      /* Append cvv1 to cvv2 */
-        while ((cv = cvec_each1(cvv1, cv)) != NULL)
-            cvec_append_var(cvv2, cv);
-    }
-    return cvv2;
-}
-
 /*! Enter a CLI edit mode
+ *
  * @param[in]  h    CLICON handle
  * @param[in]  cvv  Vector of variables from CLIgen command-line
  * @param[in]  argv Vector of user-supplied keywords
+ * @retval     0    OK
+ * @retval    -1    Error
  * Format of argv:
  *   <api_path_fmt> Generated API PATH (This is where we are in the tree)
+ *  [<api-path-fmt>] Extra api-path from mount-point
  *   <treename>     Name of generated cligen parse-tree, eg "datamodel"
  * Note api_path_fmt is not used in code but must be there in order to pick coorig from matching
  * code
  */
 int
-cli_auto_edit(clicon_handle h,
+cli_auto_edit(clixon_handle h,
               cvec         *cvv1,
               cvec         *argv)
 {
     int           retval = -1;
     char         *api_path_fmt;  /* xml key format */
+    char         *api_path_fmt01 = NULL;
     char         *api_path = NULL;
-    cg_var       *cv;
     char         *treename;
-    pt_head      *ph;  
+    pt_head      *ph;
     cg_obj       *co;
     cg_obj       *coorig;
     cvec         *cvv2 = NULL; /* cvv2 = cvv0 + cvv1 */
+    int           argc = 0;
+    char         *str;
+    char         *mtpoint = NULL;
+    yang_stmt    *yspec0;
+    char         *mtpoint2 = NULL;
 
-    if (cvec_len(argv) != 2){
-        clicon_err(OE_PLUGIN, EINVAL, "Usage: %s(api_path_fmt>, <treename>)", __FUNCTION__);
+    if (cvec_len(argv) != 2 && cvec_len(argv) != 3){
+        clixon_err(OE_PLUGIN, EINVAL, "Usage: %s(api_path_fmt>*, <treename>)", __FUNCTION__);
         goto done;
     }
-    cv = cvec_i(argv, 1);
-    treename = cv_string_get(cv);
+    if ((yspec0 = clicon_dbspec_yang(h)) == NULL){
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
+        goto done;
+    }
+    api_path_fmt = cv_string_get(cvec_i(argv, argc++));
+    str = cv_string_get(cvec_i(argv, argc++));
+    if (str && strncmp(str, "mtpoint:", strlen("mtpoint:")) == 0){
+        mtpoint = str + strlen("mtpoint:");
+        clixon_debug(CLIXON_DBG_CLI, "mtpoint:%s", mtpoint);
+        treename = cv_string_get(cvec_i(argv, argc++));
+    }
+    else
+        treename = str;
     /* Find current cligen tree */
     if ((ph = cligen_ph_find(cli_cligen(h), treename)) == NULL){
-        clicon_err(OE_PLUGIN, 0, "No such parsetree header: %s", treename);
+        clixon_err(OE_PLUGIN, 0, "No such parsetree header: %s", treename);
         goto done;
     }
     /* Find the matching cligen object 
@@ -170,33 +161,50 @@ cli_auto_edit(clicon_handle h,
             (coorig = co->co_ref) != NULL)
             cligen_ph_workpoint_set(ph, coorig);
         else {
-            clicon_err(OE_YANG, EINVAL, "No workpoint found");
+            clixon_err(OE_YANG, EINVAL, "No workpoint found");
             goto done;
         }
     }
     else{
-        clicon_err(OE_YANG, EINVAL, "No workpoint found");
+        clixon_err(OE_YANG, EINVAL, "No workpoint found");
         goto done;
     }
     if ((cvv2 = cvec_append(clicon_data_cvec_get(h, "cli-edit-cvv"), cvv1)) == NULL)
         goto done;
     /*  API_path format */
     if ((api_path_fmt = co2apipath(coorig)) == NULL){
-        clicon_err(OE_YANG, EINVAL, "No apipath found");
+        clixon_err(OE_YANG, EINVAL, "No apipath found");
         goto done;
     }
-    /* get api-path and xpath */
-    if (api_path_fmt2api_path(api_path_fmt, cvv2, &api_path, NULL) < 0)
-        goto done;
+    if (mtpoint){
+        /* Get and combine api-path01 */
+        if (mtpoint_paths(yspec0, mtpoint, api_path_fmt, &api_path_fmt01) < 0)
+            goto done;
+        if (api_path_fmt2api_path(api_path_fmt01, cvv2, yspec0, &api_path, NULL) < 0)
+            goto done;
+    }
+    else{
+        /* get api-path and xpath */
+        if (api_path_fmt2api_path(api_path_fmt, cvv2, yspec0, &api_path, NULL) < 0)
+            goto done;
+    }
     /* Store this as edit-mode */
     if (clicon_data_set(h, "cli-edit-mode", api_path) < 0)
         goto done;
+    if (mtpoint){
+        if ((mtpoint2 = strdup(mtpoint)) == NULL){
+            clixon_err(OE_UNIX, errno, "strdup");
+            goto done;
+        }
+        if (clicon_data_set(h, "cli-edit-mtpoint", mtpoint2) < 0)
+            goto done;
+    }
     if (clicon_data_cvec_set(h, "cli-edit-cvv", cvv2) < 0)
         goto done;
     if (co->co_filter){
         cvec *cvv3;
         if ((cvv3 = cvec_dup(co->co_filter)) == NULL){
-            clicon_err(OE_YANG, errno, "cvec_dup");
+            clixon_err(OE_YANG, errno, "cvec_dup");
             goto done;
         }
         if (clicon_data_cvec_set(h, "cli-edit-filter", cvv3) < 0)
@@ -204,20 +212,27 @@ cli_auto_edit(clicon_handle h,
     }
     retval = 0;
  done:
+    if (api_path_fmt01)
+        free(api_path_fmt01);
+    if (mtpoint2)
+        free(mtpoint2);
     if (api_path)
         free(api_path);
     return retval;
 }
 
 /*! CLI callback: Working point tree up to parent
+ *
  * @param[in]  h    CLICON handle
  * @param[in]  cvv  Vector of variables from CLIgen command-line
  * @param[in]  argv Vector of user-supplied keywords
+ * @retval     0    OK
+ * @retval    -1    Error
  * Format of argv:
  *   <treename>     Name of generated cligen parse-tree, eg "datamodel"
  */
 int
-cli_auto_up(clicon_handle h,
+cli_auto_up(clixon_handle h,
             cvec         *cvv,
             cvec         *argv)
 {
@@ -231,20 +246,27 @@ cli_auto_up(clicon_handle h,
     cvec    *cvv1 = NULL; /* copy */
     char    *api_path_fmt0;  /* from */
     char    *api_path_fmt1;  /* to */
+    char    *api_path_fmt2 = NULL;  /* 'to' with mountpoint prepended */
     char    *api_path = NULL;
     int      i;
     int      j;
     size_t   len;
     cvec    *cvv_filter = NULL;
-    
+    yang_stmt *yspec0;
+    char    *mtpoint = "";
+
     if (cvec_len(argv) != 1){
-        clicon_err(OE_PLUGIN, EINVAL, "Usage: %s(<treename>)", __FUNCTION__);
+        clixon_err(OE_PLUGIN, EINVAL, "Usage: %s(<treename>)", __FUNCTION__);
+        goto done;
+    }
+    if ((yspec0 = clicon_dbspec_yang(h)) == NULL){
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
         goto done;
     }
     cv = cvec_i(argv, 0);
     treename = cv_string_get(cv);
     if ((ph = cligen_ph_find(cli_cligen(h), treename)) == NULL){
-        clicon_err(OE_PLUGIN, 0, "No such parsetree header: %s", treename);
+        clixon_err(OE_PLUGIN, 0, "No such parsetree header: %s", treename);
         goto done;
     }
     if ((co0 = cligen_ph_workpoint_get(ph)) == NULL)
@@ -272,6 +294,7 @@ cli_auto_up(clicon_handle h,
         clicon_data_set(h, "cli-edit-mode", "");
         clicon_data_cvec_del(h, "cli-edit-cvv");
         clicon_data_cvec_del(h, "cli-edit-filter");
+        clicon_data_set(h, "cli-edit-mtpoint", "");
         goto ok;
     }
     /* get before and after api-path-fmt (as generated from yang) */
@@ -288,31 +311,45 @@ cli_auto_up(clicon_handle h,
     cvv1 = cvec_new(0);
     for (i=0; i<cvec_len(cvv0)-j; i++){
         cv = cvec_i(cvv0, i);
-        cvec_append_var(cvv1, cv);      
+        cvec_append_var(cvv1, cv);
     }
-    /* get api-path and xpath */
-    if (api_path_fmt2api_path(api_path_fmt1, cvv1, &api_path, NULL) < 0)
-        goto done;
+    clicon_data_get(h, "cli-edit-mtpoint", &mtpoint);
+    if (strlen(mtpoint)) {
+        if (mtpoint_paths(yspec0, mtpoint, api_path_fmt1, &api_path_fmt2) < 0)
+            goto done;
+        if (api_path_fmt2api_path(api_path_fmt2, cvv1, yspec0, &api_path, NULL) < 0)
+            goto done;
+    }
+    else{
+        /* get api-path and xpath */
+        if (api_path_fmt2api_path(api_path_fmt1, cvv1, yspec0, &api_path, NULL) < 0)
+            goto done;
+    }
     /* Store this as edit-mode */
     clicon_data_set(h, "cli-edit-mode", api_path);
     clicon_data_cvec_set(h, "cli-edit-cvv", cvv1);
  ok:
     retval = 0;
  done:
+    if (api_path_fmt2)
+        free(api_path_fmt2);
     if (api_path)
         free(api_path);
     return retval;
 }
 
 /*! CLI callback: Working point tree reset to top level
+ *
  * @param[in]  h    CLICON handle
  * @param[in]  cvv  Vector of variables from CLIgen command-line
  * @param[in]  argv Vector of user-supplied keywords
+ * @retval     0    OK
+ * @retval    -1    Error
  * Format of argv:
  *   <treename>     Name of generated cligen parse-tree, eg "datamodel"
  */
 int
-cli_auto_top(clicon_handle h,
+cli_auto_top(clixon_handle h,
              cvec         *cvv,
              cvec         *argv)
 {
@@ -320,11 +357,11 @@ cli_auto_top(clicon_handle h,
     cg_var  *cv;
     char    *treename;
     pt_head *ph;
-    
+
     cv = cvec_i(argv, 0);
     treename = cv_string_get(cv);
     if ((ph = cligen_ph_find(cli_cligen(h), treename)) == NULL){
-        clicon_err(OE_PLUGIN, 0, "No such parsetree header: %s", treename);
+        clixon_err(OE_PLUGIN, 0, "No such parsetree header: %s", treename);
         goto done;
     }
     cligen_ph_workpoint_set(ph, NULL);
@@ -332,26 +369,30 @@ cli_auto_top(clicon_handle h,
     clicon_data_set(h, "cli-edit-mode", "");
     clicon_data_cvec_del(h, "cli-edit-cvv");
     clicon_data_cvec_del(h, "cli-edit-filter");
+    clicon_data_set(h, "cli-edit-mtpoint", "");
     retval = 0;
  done:
     return retval;
 }
 
 /*! CLI callback: set auto db item
- * @param[in]  h    Clicon handle
+ *
+ * @param[in]  h    Clixon handle
  * @param[in]  cvv  Vector of cli string and instantiated variables 
  * @param[in]  argv Vector. First element xml key format string, eg "/aaa/%s"
+ * @retval     0    OK
+ * @retval    -1    Error
  * Format of argv:
  *   <api-path-fmt> Generated
  */
-int 
-cli_auto_set(clicon_handle h,
+int
+cli_auto_set(clixon_handle h,
              cvec         *cvv,
              cvec         *argv)
 {
     int   retval = -1;
     cvec *cvv2 = NULL;
-    
+
     cvv2 = cvec_append(clicon_data_cvec_get(h, "cli-edit-cvv"), cvv);
     if (cli_dbxml(h, cvv2, argv, OP_REPLACE, NULL) < 0)
         goto done;
@@ -363,18 +404,21 @@ cli_auto_set(clicon_handle h,
 }
 
 /*! Merge datastore xml entry
- * @param[in]  h    Clicon handle
+ *
+ * @param[in]  h    Clixon handle
  * @param[in]  cvv  Vector of cli string and instantiated variables 
  * @param[in]  argv Vector. First element xml key format string, eg "/aaa/%s"
+ * @retval     0    OK
+ * @retval    -1    Error
  */
-int 
-cli_auto_merge(clicon_handle h,
+int
+cli_auto_merge(clixon_handle h,
                cvec         *cvv,
                cvec         *argv)
 {
     int retval = -1;
     cvec *cvv2 = NULL;
-    
+
     cvv2 = cvec_append(clicon_data_cvec_get(h, "cli-edit-cvv"), cvv);
     if (cli_dbxml(h, cvv2, argv, OP_MERGE, NULL) < 0)
         goto done;
@@ -386,18 +430,21 @@ cli_auto_merge(clicon_handle h,
 }
 
 /*! Create datastore xml entry
- * @param[in]  h    Clicon handle
+ *
+ * @param[in]  h    Clixon handle
  * @param[in]  cvv  Vector of cli string and instantiated variables 
  * @param[in]  argv Vector. First element xml key format string, eg "/aaa/%s"
+ * @retval     0    OK
+ * @retval    -1    Error
  */
-int 
-cli_auto_create(clicon_handle h,
+int
+cli_auto_create(clixon_handle h,
                 cvec         *cvv,
                 cvec         *argv)
 {
-    int retval = -1;
+    int   retval = -1;
     cvec *cvv2 = NULL;
-    
+
     cvv2 = cvec_append(clicon_data_cvec_get(h, "cli-edit-cvv"), cvv);
     if (cli_dbxml(h, cvv2, argv, OP_CREATE, NULL) < 0)
         goto done;
@@ -409,18 +456,21 @@ cli_auto_create(clicon_handle h,
 }
 
 /*! Delete datastore xml
- * @param[in]  h    Clicon handle
+ *
+ * @param[in]  h    Clixon handle
  * @param[in]  cvv  Vector of cli string and instantiated variables 
  * @param[in]  argv Vector. First element xml key format string, eg "/aaa/%s"
+ * @retval     0    OK
+ * @retval    -1    Error
  */
-int 
-cli_auto_del(clicon_handle h,
+int
+cli_auto_del(clixon_handle h,
              cvec         *cvv,
              cvec         *argv)
 {
     int   retval = -1;
     cvec *cvv2 = NULL;
-    
+
     cvv2 = cvec_append(clicon_data_cvec_get(h, "cli-edit-cvv"), cvv);
     if (cli_dbxml(h, cvv2, argv, OP_REMOVE, NULL) < 0)
         goto done;
@@ -437,12 +487,12 @@ struct findpt_arg{
 };
 
 /*! Iterate through parse-tree to find first argument set by cli_generate code
+ *
  * @see cg_applyfn_t
  * @param[in]  co   CLIgen parse-tree object
  * @param[in]  arg  Argument, cast to application-specific info
- * @retval     -1   Error: break and return
- * @retval     0    OK and continue
  * @retval     1    OK and return (abort iteration)
+ * @retval     0    OK and continue
  */
 static int
 cli_auto_findpt(cg_obj *co,
@@ -460,9 +510,12 @@ cli_auto_findpt(cg_obj *co,
 }
 
 /*! Enter edit mode
- * @param[in]  h    Clicon handle
+ *
+ * @param[in]  h    Clixon handle
  * @param[in]  cvv  Vector of cli string and instantiated variables 
  * @param[in]  argv Vector of args to function in command. 
+ * @retval     0    OK
+ * @retval    -1    Error
  * Format of argv:
  *   <api_path_fmt> Generated API PATH FORMAT (print-like for variables)
  *   <vars>*        List of static variables that can be used as values for api_path_fmt
@@ -475,8 +528,8 @@ cli_auto_findpt(cg_obj *co,
  *   api_path: /a/b=42,99/c
  * @see cli_auto_edit
  */
-int 
-cli_auto_sub_enter(clicon_handle h,
+int
+cli_auto_sub_enter(clixon_handle h,
                    cvec         *cvv,
                    cvec         *argv)
 {
@@ -490,9 +543,14 @@ cli_auto_sub_enter(clicon_handle h,
     cg_var       *cv = NULL;
     pt_head      *ph;
     struct findpt_arg fa = {0,};
-    
+    yang_stmt        *yspec0;
+
     if (cvec_len(argv) < 2){
-        clicon_err(OE_PLUGIN, EINVAL, "Usage: %s(<tree> <api_path_fmt> (,vars)*)", __FUNCTION__);
+        clixon_err(OE_PLUGIN, EINVAL, "Usage: %s(<tree> <api_path_fmt> (,vars)*)", __FUNCTION__);
+        goto done;
+    }
+    if ((yspec0 = clicon_dbspec_yang(h)) == NULL){
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
         goto done;
     }
     /* First argv argument: treename */
@@ -510,8 +568,8 @@ cli_auto_sub_enter(clicon_handle h,
      * argv, but this can be done differently
      */
     /* Create a cvv with variables to add to api-path */
-    if ((cvv1 = cvec_new(0)) == NULL){ 
-        clicon_err(OE_UNIX, errno, "cvec_new");
+    if ((cvv1 = cvec_new(0)) == NULL){
+        clixon_err(OE_UNIX, errno, "cvec_new");
         goto done;
     }
     /* Append static variables (skip first treename) */
@@ -524,7 +582,7 @@ cli_auto_sub_enter(clicon_handle h,
         if (cvec_append_var(cvv1, cvec_i(cvv, i)) < 0)
             goto done;
     }
-    if (api_path_fmt2api_path(api_path_fmt, cvv1, &api_path, NULL) < 0)
+    if (api_path_fmt2api_path(api_path_fmt, cvv1, yspec0, &api_path, NULL) < 0)
         goto done;
     /* Assign the variables */
     if ((cvv2 = cvec_append(clicon_data_cvec_get(h, "cli-edit-cvv"), cvv1)) == NULL)
@@ -536,7 +594,7 @@ cli_auto_sub_enter(clicon_handle h,
         goto done;
     /* Find current cligen tree */
     if ((ph = cligen_ph_find(cli_cligen(h), treename)) == NULL){
-        clicon_err(OE_PLUGIN, ENOENT, "No such parsetree header: %s", treename);
+        clixon_err(OE_PLUGIN, ENOENT, "No such parsetree header: %s", treename);
         goto done;
     }
     /* Find the point in the generated clispec tree where workpoint should be set */
@@ -544,7 +602,7 @@ cli_auto_sub_enter(clicon_handle h,
     if (pt_apply(cligen_ph_parsetree_get(ph), cli_auto_findpt, INT32_MAX, &fa) < 0)
         goto done;
     if (fa.fa_co == NULL){
-        clicon_err(OE_PLUGIN, ENOENT, "No such cligen object found %s", api_path);
+        clixon_err(OE_PLUGIN, ENOENT, "No such cligen object found %s", api_path);
         goto done;
     }
     cligen_ph_workpoint_set(ph, fa.fa_co);

@@ -1,79 +1,603 @@
 # Clixon Changelog
 
-* [6.1.0](#610) Expected: beginning of 2023
+* [7.3.0](#730) Expected: January 2025
+* [7.2.0](#720) 28 October 2024
+* [7.1.0](#710) 3 July 2024
+* [7.0.1](#701) 3 April 2024
+* [7.0.0](#700) 8 March 2024
+* [6.5.0](#650) 6 December 2023
+* [6.4.0](#640) 30 September 2023
+* [6.3.0](#630) 29 July 2023
+* [6.2.0](#620) 30 April 2023
+* [6.1.0](#610) 19 Feb 2023
 * [6.0.0](#600) 29 Nov 2022
-* [5.9.0](#590) 24 September 2022
-* [5.8.0](#580) 28 July 2022
-* [5.7.0](#570) 17 May 2022
-* [5.6.0](#560) 8 March 2022
-* [5.5.0](#550) 20 January 2022
-* [5.4.0](#540) 30 November 2021
-* [5.3.0](#530) 27 September 2021
-* [5.2.0](#520) 1 July 2021
-* [5.1.0](#510) 15 April 2021
-* [5.0.0](#500) 27 February 2021
-  * [5.0.1](#501) 10 March 2021
-* [4.9.0](#490) 18 December 2020
-* [4.8.0](#480) 18 October 2020
-* [4.7.0](#470) 14 September 2020
-* [4.6.0](#460) 14 August 2020
-* [4.5.0](#450) 12 May 2020
-* [4.4.0](#440) 5 April 2020
-* [4.3.0](#430) 1 January 2020
-  * [4.3.3](#433) 
-  * [4.3.2](#432)
-  * [4.3.1](#431)
-* [4.2.0](#420) 27 October 2019
-* [4.1.0](#410) 18 August 2019
-* [4.0.0](#400) 13 July 2019
-  * [4.0.1](#401)
-* [3.9.0](#390) 21 Feb 2019
-* [3.8.0](#380) 6 Nov 2018
-* [3.7.0](#370) 22 July 2018
-* [3.6.0](#360) 30 April 2018
-  * [3.6.1](#361)
-* [3.5.0](#350) 12 February 2018
-* [3.4.0](#340) 1 January 2018
-* [3.3.3](#333) 25 November 2017
-* [3.3.2](#332) Aug 27 2017
-* [3.3.1](#331) June 7 2017
 
-## 6.1.0
-Expected: beginning of 2023
+## 7.3.0
+Expected: January 2025
 
-### New features
+### Features
 
-* YANG schema mount RFC 8528
-  * Experimental
-  * Restrictions:
-    * Only schema-ref=inline, not shared-schema
-    * Only presence containers can be mount-points
-  * New plugin callback: `ca_yang_mount`
-  * Standards: RFC 8528
-  * To enable: define `YANG_SCHEMA_MOUNT`
-* Netconf monitoring RFC 6022 , part 2
-  * Datastores and sessions
-    * Added clixon-specific transport identities: cli, snmp, netconf, restconf
-    * Added source-host fro native restonf, but no other transports
-  * Standards
-    * RFC 6022 "YANG Module for NETCONF Monitoring"
-  * See [Feature Request: Support RFC 6022 (NETCONF Monitoring)](https://github.com/clicon/clixon/issues/370)
-  * Remaining: statistics state
-  
+* Performance optimization
+  * New no-copy `xmldb_get_cache` function for performance
+  * Optimized duplicate detection
+* New: CLI generic pipe callbacks
+  * Add scripts in `CLICON_CLI_PIPE_DIR`
+* New: [feature request: support xpath functions for strings](https://github.com/clicon/clixon/issues/556)
+  * Added: re-match, substring, string, string-length, translate, substring-before, substring-after, starts-with
+* Added support for system-only-config data
+  * Store sensitive data in the "system" instead of in datastores
+  * New `CLICON_XMLDB_SYSTEM_ONLY_CONFIG` configuration option
+  * New `system-only-config` extension
+  * New `ca_system_only` backend callback for reading system-only data
+* New `clixon-config@2024-11-01.yang` revision
+  * Changed: `CLICON_NETCONF_DUPLICATE_ALLOW` to not only check but remove duplicates
+  * Added: `CLICON_CLI_PIPE_DIR`
+  * Added: `CLICON_XMLDB_SYSTEM_ONLY_CONFIG`
+  * Deprecated:  `CLICON_YANG_SCHEMA_MOUNT_SHARE`
+
+### C/CLI-API changes on existing features
+
+Developers may need to change their code
+
+* Moved callbacks starting programs from libclixon_cli to example code
+  * The functions are: `cli_start_shell` and `cli_start_program`
+  * If you need them, add them to your application plugin code instead
+* Changed C-API: add `system-only` parameter with default value `0` last:
+  * `clixon_json2file()` -> `clixon_json2file(,0)`
+  * `clixon_json2cbuf()` -> `clixon_json2cbuf(,0)`
+
+### Corrected Bugs
+
+* Fixed: [Autocli: error when empty YANG group and grouping-treeref=true](https://github.com/clicon/clixon/issues/579)
+* Fixed: [Mem error when more multiple uses on top level with multiple statements in grouping](https://github.com/clicon/clixon/issues/583)
+* Fixed: [Change CLICON_NETCONF_DUPLICATE_ALLOW to remove duplicates](https://github.com/clicon/clixon-controller/issues/160)
+* Fixed: Segv in canonical xpath transform
+* Fixed: [Error with submodules and feature Interaction](https://github.com/clicon/clixon-controller/issues/158)
+* Fixed: [Expansion removes the double quote](https://github.com/clicon/clixon/issues/524)
+  *  Add escaping in expand_dbvar instead of automatic in cligen expand
+* Fixed: [string length validation doesn't work for the entry "" in case it has default value specified](https://github.com/clicon/clixon/issues/563)
+* Fixed: [SNMP: snmpwalk is slow and can timeout](https://github.com/clicon/clixon/issues/404)
+
+## 7.2.0
+28 October 2024
+
+The 7.2.0 release features several minor changes and bug-fixes including memory optimizations and package builds.
+
+### Features
+
+* Restconf: Support for list of media in Accept header
+* Rearranged YANG top-levels into YANG domains, mounts, and specs
+* Deb build script
+* Optimize YANG memory
+  * Autocli
+    * Late evaluation of uses/grouping
+  * YANG
+    * Added union and extended struct for uncommon fields
+    * Removed per-object YANG linenr info
+    * Yang-type cache only for original trees (not derived via grouping/augment)
+    * Added option `CLICON_YANG_USE_ORIGINAL` to use original yang object in grouping/augment
+* New: [CLI simple alias](https://github.com/clicon/cligen/issues/112)
+  * See: https://clixon-docs.readthedocs.io/en/latest/cli.html#cli-aliases
+* List pagination more ietf-draft compliance
+  * Added where, sort-by and direction parameter for configured data
+* New `clixon-autocli@2024-08-01.yang` revision
+  * Added: disable operation for module rules
+* New `clixon-config@2024-08-01.yang` revision
+  * Added: `CLICON_YANG_DOMAIN_DIR`
+  * Added: `CLICON_YANG_USE_ORIGINAL`
+
 ### API changes on existing protocol/config features
 
 Users may have to change how they access the system
 
+* Capability announce urn:ietf:params:netconf:capability:yang-library:1.1 (instead of 1.0)
+  * RFC 7950->8526
+* New version string on the form: `7.1.0-1+11+g2b25294`
+* Restconf: Better RFC compliance with Accept errors: 406 vs 415
+* Removed YANG line-number in error-messages for memory optimization
+  * Re-enable by setting `YANG_SPEC_LINENR` compile-time option
+* NETCONF error returns of failed leafref references, see https://github.com/clicon/clixon/issues/536
+
+### C/CLI-API changes on existing features
+
+Developers may need to change their code
+
+* Added `domain` argument to yang parse functions. Upgrade as follows:
+  * `yang_file_find_match(h, m, r, f)` -> `yang_file_find_match(h, m, r, NULL, f)`
+  * `yang_parse_module(h, m, r, y, o)` -> `yang_parse_module(h, m, r, y, NULL, o)`
+* Replaced `clixon_get_logflags()` with `clixon_logflags_get()`
+* New `yn_iter()` yang iterator replaces `yn_each()`
+  * Use an integer iterator instead of yang object
+  * Replace:
+    `y1 = yn_each(y0, y1) { ...`
+  * with:
+    `int inext = 0;
+     y1 = yn_iter(y0, &inext) { ...`
+* Add `keyw` argument to `yang_stats()`
+
+### Corrected Bugs
+
+* Fixed: [YANG 'when' does not work in multiple grouping](https://github.com/clicon/clixon/issues/572)
+* Fixed: [Error when changing choice/case with different structure](https://github.com/clicon/clixon/issues/568)
+* Fixed: [Clixon handle if-feature incorrectly](https://github.com/clicon/clixon/issues/555)
+* Fixed: [Clixon fails to load yang with extension](https://github.com/clicon/clixon/issues/554)
+* Fixed: Double top-levels in xmldb_get that could occur with xpath containing choice.
+* Fixed: [RESTCONF exit on cert error + complex accept](https://github.com/clicon/clixon/issues/551)
+* Fixed: [Deletion of leaf in YANG choice removes leaf in a different choice/case](https://github.com/clicon/clixon/issues/542)
+* Fixed: Deviated types were resolved in target context, not lexically in deviation context
+* Fixed: Signal handling of recv message
+   Revert to signal handling in 6.5 that was changed in the netconf uniform handling in 7.0
+* Fixed: [NETCONF error reply from failed leafref rquire-instance does not comply to RFC 7950](https://github.com/clicon/clixon/issues/536)
+
+## 7.1.0
+3 July 2024
+
+The 7.1.0 release features RESTCONF notifications for native mode,
+multi-datastore, and many new configure options.
+
+### Features
+
+* RESTCONF notification for native mode
+  * Previously only for FCGI
+  * The following does not work: Regular subscription + stop-time
+* Optimization of yang schema mount: share yang-specs if all YANGs are equal
+  * This reduces memory if many mount-points share YANGs
+* Changed datastore modstate to be last in file, as prior to 7.0
+* Event priority. Backend socket has higher prio
+* Multi-datastore
+  * You can split configure datastore into multiple sub-files
+  * On edit, only changed sub-files are updated.
+  * Curently only implemented for mount-points
+* Code for SHA digests.
+* Option for automatic lock of datastore on edit-config
+  * See [Autolock](https://github.com/clicon/clixon/issues/508)
+* Option to set default CLI output format
+  * See [Default format should be configurable](https://github.com/clicon/clixon-controller/issues/87)
+* CLI support for multiple inline commands separated by semi-colon
+* New `clixon-config@2024-04-01.yang` revision
+  * Added options:
+    - `CLICON_NETCONF_DUPLICATE_ALLOW`: Disable duplicate check in NETCONF messages
+    - `CLICON_LOG_DESTINATION`: Default log destination
+    - `CLICON_LOG_FILE`: Which file to log to if file logging
+    - `CLICON_DEBUG`: Debug flags
+    - `CLICON_YANG_SCHEMA_MOUNT_SHARE`: Share same YANGs of several moint-points
+    - `CLICON_SOCK_PRIO`: Enable socket event priority
+    - `CLICON_XMLDB_MULTI`: Split datastore into multiple sub files
+    - `CLICON_CLI_OUTPUT_FORMAT`: Default CLI output format
+    - `CLICON_AUTOLOCK`: Implicit locks
+* New `clixon-lib@2024-04-01.yang` revision
+    - Added: debug bits type
+    - Added: xmldb-split extension
+    - Added: Default format
+
+### API changes on existing protocol/config features
+Users may have to change how they access the system
+
+* Changed intermediate version numbers to be git-style, eg `7.0.0-39` instead of `7.1.0-PRE`
+* If `CLICON_XMLDB_MULTI` is set, datastores are stored in a new directory
+   * Previously: `CLICON_XMLDB_DIR/<db>_db`
+   * New: `CLICON_XMLDB_DIR/<db>d/`
+   * In particular, the top-level is moved from `<db>_db` to `<db>.d/0.xml`
+   * Backward-compatible:
+     * If backend is started with `-s startup` or `-s running` then `<db>_db` is read if `<db>.d/0.xml` is not found
+* Autoconf: Openssl mandatory for all configure, not only restconf, due to digest code
+
+### C/CLI-API changes on existing features
+
+Developers may need to change their code
+
+* XML encoding added a `quotes` parameter for attribute encoding, update as follows:
+  * `xml_chardata_encode(e, fmt,...)` --> `xml_chardata_encode(e, 0, fmt,...)`
+  * `xml_chardata_cbuf_append(cb, str)` --> `xml_chardata_cbuf_append(cb, 0, str)`
+
+### Corrected Bugs
+
+* Fixed: [Invalid api-path errors thrown when displayin qfx family device conf in CLI](https://github.com/clicon/clixon-controller/issues/126)
+* Fixed: [Error message from CLI if terminal is modified](https://github.com/clicon/clixon-controller/issues/122)
+* Fixed: backend exit when receiving invalid NETCONF get select XPath
+  * Added XML encoding to XPaths in `select` attribute
+* Fixed: Fail on return errors when reading from datastore
+  * Can happen if running is not upgraded for example
+* Fixed: [Duplicate config files in configdir causes merge problems -> set ? = NULL](https://github.com/clicon/clixon/issues/510)
+
+## 7.0.1
+3 April 2024
+
+Three issues detected in post-testing of 7.0.0 are fixed in the 7.0.1 release
+
+### Corrected Bugs
+
+* Fixed: [NACM create rules do not work properly on objects with default values](https://github.com/clicon/clixon/issues/506)
+* Fixed: [CLI: Explicit api-path not encoded correctly](https://github.com/clicon/clixon/issues/504)
+* Fixed: [Startup and default of same object causes too-many-elements error](https://github.com/clicon/clixon/issues/503)
+
+## 7.0.0
+8 March 2024
+
+Clixon 7.0.0 is a major release with changes to the debug/log/error API, other APIs,
+standardized internal framing protocol and many other changes.
+It also supports the 1.0 clixon controller release.
+
+### Features
+
+* Changed framing between backend and frontend to RFC6242 "chunked-encoding"
+  * Previous a propriatary framing method was used
+* Added micro-second resolution to logs via stderr/stdout
+* New command-line debug mechanism
+  * Separation between subject-area and details
+  * Multiple subject-areas
+  * Symbolic and combined debug names, example: `-D debug -D detail`
+  * See https://clixon-docs.readthedocs.io/en/latest/errors.html#customized-errors for more info
+* Made coverity analysis and fixed most of them
+  * Some were ignored being for generated code (eg lex) or not applicable
+* Feature: [Add support for -V option to give version](https://github.com/clicon/clixon/issues/472)
+  * All clixon applications added command-line option `-V` for printing version
+  * New ca_version callback for customized version output
+* Optimization:
+  * Removed reply sanity if `CLICON_VALIDATE_STATE_XML` not set
+  * Improved performance of GET and PUT operations
+  * Optimized datastore access by ensuring REPORT_ALL in memory and EXPLICIT in file
+  * Added mountpoint cache as yang flag `YANG_FLAG_MTPOINT_POTENTIAL`
+  * Optimized `yang_find`, especially namespace lookup
+  * Filtered state data if not match xpath
+* Added reference count for shared yang-specs (schema mounts)
+  * Allowed for sharing yspec+modules between several mountpoints
+* Added "%k" as extra flag character to api-path-fmt
+
+### API changes on existing protocol/config features
+Users may have to change how they access the system
+
+* Changed framing between backend and frontend to RFC6242 "chunked-encoding"
+  * Should only affect advanced usage between clixon frontend and backend
+  * This should allow standard netconf utilities to be used as frontend (may be some caveats)
+* Revert the creators attribute feature introduced in 6.2. It is now obsoleted.
+  It is replaced with a configured `creators` and user/application semantics
+* New `clixon-lib@2024-01-01.yang` revision
+  * Replaced container creators to grouping/uses
+* New `clixon-config@2024-01-01.yang` revision
+  * Changed semantics:
+    * `CLICON_VALIDATE_STATE_XML` - disable return sanity checks if false
+  * Marked as obsolete:
+    * `CLICON_DATASTORE_CACHE` Replaced with enhanced datastore read API
+    * `CLICON_NETCONF_CREATOR_ATTR` reverting 6.5 functionality
+
+### C/CLI-API changes on existing features
+Developers may need to change their code
+
+* Rename function `xml_yang_minmax_recurse()` -> `xml_yang_validate_minmax()`
+* Modified msg functions for clearer NETCONF 1.0 vs 1.1 API:
+  * `clicon_rpc1` --> `clixon_rpc10`
+  * `clicon_msg_send1` --> `clixon_msg_send10`
+  * `clicon_msg_rcv` and `clicon_msg_decode` --> `clixon_msg_rcv11`
+    * Rewrite by calling `clixon_msg_rcv11` and explicit xml parsing
+  * `clicon_msg_rcv1` --> `clixon_msg_rcv10`
+* Added `yspec` parameter to `api_path_fmt2api_path()`:
+  * `api_path_fmt2api_path(af, c, a, c)` --> `api_path_fmt2api_path(af, c, yspec, a, c)`
+* Added flags parameter to default functions:
+  * `xml_default_recurse(...)` -> `xml_default_recurse(..., 0)`
+  * `xml_defaults_nopresence(...)` -> `xml_default_nopresence(..., 0)`
+    * Also renamed (_defaults_ -> _default_)
+* Changed function name: `choice_case_get()` -> `yang_choice_case_get()`
+* New `clixon-lib@2024-01-01.yang` revision
+  * Removed container creators, reverted from 6.5
+* Changed ca_errmsg callback to a more generic variant
+  * Includes all error, log and debug messages
+  * See [Customized NETCONF error message](https://github.com/clicon/clixon/issues/454)
+  * See https://clixon-docs.readthedocs.io/en/latest/errors.html#customized-errors for more info
+* Refactoring basic clixon modules and some API changes
+  * Changes marked in code with `COMPAT_6_5`
+    * Most common functions have backward compatible macros through the 6.6 release
+  * Handle API
+    * Renamed `clicon_handle` -> `clixon_handle`
+    * `clicon_handle_init()` -> `clixon_handle_init()
+    * `clicon_handle_exit()` -> `clixon_handle_exit()
+  * Log/Debug API
+    * Changed function names. You need to rename as follows:
+      * `clicon_log_init()` -> `clixon_log_init(h,)` NOTE added "clixon_handle h"
+      * `clicon_log()` -> `clixon_log(h,)`   NOTE added "clixon_handle h"
+      * `clixon_debug_init(d, f)` -> `clixon_debug_init(h, )` NOTE h added, f removed
+      * `clicon_log_xml()` -> `clixon_debug_xml(h,)` NOTE added "clixon_handle h"
+      * `clixon_debug_xml()` -> `clixon_debug_xml(h,)` NOTE added "clixon_handle h"
+  * Error API:
+    * Added `clixon_err_init(h)` function
+    * Renaming, make the following changes:
+      * `clicon_err()` -> `clixon_err()`
+      * `clicon_err_reset()` -> `clixon_err_reset()`
+      * `clicon_strerror(int)` -> `clixon_err_str()`
+      * `clicon_netconf_error(h, x, fmt)` -> clixon_err_netconf(h, OE_XML, 0, x, fmt)`
+      * `netconf_err2cb(...)` --> `netconf_err2cb(h, ...)`
+      * Likewise for some other minor functions: `clicon_err_*` -> `clixon_err_*`
+    * Replaced global variables with access functions. Replace variables with functions as follows:
+      * `clicon_errno`    -> `clixon_err_category()`
+      * `clicon_suberrno` -> `clixon_err_subnr()`
+      * `clicon_err_reason`   -> `clixon_err_reason()`
+  * Changed process API:
+      * `clixon_proc_socket(...)` --> `clixon_proc_socket(h, ..., sockerr)`
+
+### Corrected Bugs
+
+* Fixed: [If services add duplicate entries, controller does not detect this](https://github.com/clicon/clixon-controller/issues/107)
+* Fixed: [Problems with diff of YANG lists ordered-by user](https://github.com/clicon/clixon/issues/496)
+* Fixed: [show compare does not show correct diff while load merge xml](https://github.com/clicon/clixon-controller/issues/101)
+* Fixed: [commit goes 2 times](https://github.com/clicon/clixon/issues/488)
+* Fixed: Problem with cl:ignore attribute for show compare
+* Fixed: [yang_enum_int_value() fails if no explicit values are assigned to enums](https://github.com/clicon/clixon/issues/483)
+  Remaining work: `yang_enum2valstr()`
+* Fixed: [show compare/diff problems with sorted-by user](https://github.com/clicon/clixon/issues/482)
+* Fixed: [Choice and Leafref](https://github.com/clicon/clixon/issues/469)
+* Fixed: [Problem deleting non-last list element if ordered-by user](https://github.com/clicon/clixon/issues/475)
+* Fixed: [Tab completion mounted devices with lists](https://github.com/clicon/clixon-controller/issues/72)
+* Fixed: kill-session cleanup when client none existant, and for all db:s
+* Fixed: [Using the characters '<' and '>' might cause an invalid diff](https://github.com/clicon/clixon-controller/issues/73)
+
+## 6.5.0
+6 December 2023
+
+Clixon 6.5 includes bugfixes, moved out utility functions and some API changes.
+
+### API changes on existing protocol/config features
+Users may have to change how they access the system
+
+* All clixon test utilities in util/ have been moved to a separate repo: clicon/clixon-util
+  * To run tests you need to clone, build and install them separately
+* Moved and split install of main example config file
+  * From `/usr/local/etc/example.xml` to `/usr/local/etc/clixon/example.xml`
+  * Added `/usr/local/etc/clixon/example/autocli.xml` and `/usr/local/etc/clixon/example/restconf.xml`
+
+### C/CLI-API changes on existing features
+Developers may need to change their code
+p
+* Changed return value of `xml_add_attr` from 0/-1 to xa/NULL
+  * You need to change eg `if (xml_add_attr < 0)` to if (xml_add_attr == NULL)`
+* Changed signature of `clicon_netconf_error()` and `netconf_err2cb()`
+  * You need to add the clixon handle as first parameter:
+    * `clicon_netconf_error(...)` --> `clixon_netconf_error(h, ...)`
+    * `netconf_err2cb(...)` --> `netconf_err2cb(h, ...)`
+* Changed function name for `clicon_debug` functions. You need to rename as follows:
+  * clicon_debug() -> clixon_debug()
+  * clicon_debug_init() -> clixon_debug_init()
+  * clicon_debug_get() -> clixon_debug_get()
+  * clicon_debug_xml() -> clixon_debug_xml()
+  * There are backward compatible macros during a transition period
+
+### Minor features
+
+* New feature: [Customized NETCONF error message](https://github.com/clicon/clixon/issues/454)
+  * Added new callback `.ca_errmsg`
+  * See https://clixon-docs.readthedocs.io/en/latest/errors.html#customized-errors for more info
+* New `clixon-config@2023-11-01.yang` revision
+  * Added `CLICON_NETCONF_CREATOR_ATTR` option
+* New `clixon-lib@2023-11-01.yang` revision
+  * Added ignore-compare extension
+  * Added creator meta configuration
+
+### Corrected Bugs
+
+* Fixed: [NACM paths don't work for mounted YANG models](https://github.com/clicon/clixon-controller/issues/62)
+* Fixed: [cl:creator attribute must be persistent](https://github.com/clicon/clixon-controller/issues/54)
+* Fixed: [Does clixon cli support autocompletion for leafrefs pointed to another module?](https://github.com/clicon/clixon/issues/455)
+* Fixed: [commit diff sometimes includes namespace in output](https://github.com/clicon/clixon-controller/issues/44)
+
+## 6.4.0
+30 September 2023
+
+This releases is mainly for bugfixes and improvements of existing functionality, such as CLI output pipes.
+
+### Minor features
+
+* New `clixon-autocli@2023-09-01.yang` revision
+  * Added argument to alias extension
+* CLI show compare example function:
+  * Improved diff algorithm for XML and TEXT/curly, replaced UNIX diff with structural in-mem algorithm
+* JSON: Added unicode BMP support for unicode strings as part of fixing (https://github.com/clicon/clixon/issues/453)
+* Example cli pipe grep command quotes vertical bar for OR function
+* Added: [Feature request: node's alias for CLI](https://github.com/clicon/clixon/issues/434)
+   * Note: "Skip" is for all nodes, but "Alias" is only for leafs
+* New command-line option for dumping configuration options for all clixon applications after load
+  * Syntax is `-C <format>`
+  * Example: `clixon_backend -1C json`
+* Removed sending restconf config inline using -R when CLICON_BACKEND_RESTCONF_PROCESS=true
+  * Define RESTCONF_INLINE to revert
+* Clarified clixon_cli command-line: `clixon_cli [options] [commands] [-- extra-options]`
+
+### C/CLI-API changes on existing features
+Developers may need to change their code
+
+* Renamed `clixon_txt2file()` to `clixon_text2file()`
+* Changed parameters of example clispec function `compare_dbs()`
+  * New parameters are: `db1`, `db2`, `format`
+* Add `fromroot` parameter to `cli_show_common()`
+  * `cli_show_common(...xpath...)` --> `cli_show_common(...xpath,0...)`
+* Low-level message functions added `descr` argument for better logging
+  * In this way, message debugs in level 2 are more descriptive
+  * The descr argument can be set to NULL for backward-compability, see the following translations:
+    * `clicon_rpc(s, ...)` --> `clicon_rpc(s, NULL, ...)`
+    * `clicon_rpc1(s, ...)` --> `clicon_rpc1(s, NULL, ...)`
+    * `clicon_msg_send(s, ...)` --> `clicon_msg_send(s, NULL, ...)`
+    * `clicon_msg_send1(s, ...)` --> `clicon_msg_send1(s, NULL, ...)`
+    * `clicon_msg_rcv(s, ...)` --> `clicon_msg_rcv(s, NULL, ...)`
+    * `clicon_msg_rcv1(s, ...)` --> `clicon_msg_rcv1(s, NULL, ...)
+    * `clicon_msg_notify_xml(h, s, ...)` --> `clicon_msg_notify_xml(h, s, NULL, ...)`
+    * `send_msg_reply(s, ...)` --> `send_msg_reply(s, NULL, ...)`
+    * `clixon_client_lock(s, ...)` --> `clixon_client_lock(s, NULL, ...)`
+    * `clixon_client_hello(s, ...)` --> `clixon_client_hello(s, NULL, ...)`
+
+* CLI pipe function: added arg to `pipe_tail_fn()`
+
+### Corrected Bugs
+
+* Fixed: ["show compare" and "show compare | display cli" differs #23](https://github.com/clicon/clixon-controller/issues/23)
+* Fixed: [JSON backslash string decoding/encoding not correct](https://github.com/clicon/clixon/issues/453)
+* Fixed: [CLI show config | display <format> exits over mountpoints with large YANGs](https://github.com/clicon/clixon-controller/issues/39)
+  * JSON string fixed according to RFC 8259: encoding/decoding of escape as defined in Section 8
+  * No need to bind for xml and json, only cli and text
+* Fixed several issues with including multiple configure-files in a config-directory, including overwriting of structured sub-configs.
+* Fixed: [YANG error when poking on EOS configuration](https://github.com/clicon/clixon-controller/issues/26)
+* Fixed: [CLICON_CONFIGDIR with external subsystems causes endless looping](https://github.com/clicon/clixon/issues/439)
+* Fixed: ["show configuration devices" and "show configuration devices | display cli" differs](https://github.com/clicon/clixon-controller/issues/24)
+* Fixed: [Configuring Juniper PTX produces CLI errors](https://github.com/clicon/clixon-controller/issues/19)
+* Fixed: CLI output pipes: Add `CLICON_PIPETREE` to any cli files, not just the first
+
+## 6.3.0
+29 July 2023
+
+Clixon 6.3 introduces CLI output pipes and multiple updates and optimizations, primarily to the CLI.
+
+### New features
+
+* CLI output pipes
+  * Building on a new CLIgen feature
+  * See https://clixon-docs.readthedocs.io/en/latest/cli.html#output-pipes
+
+### API changes on existing protocol/config features
+Users may have to change how they access the system
+
+* New `clixon-config@2023-05-01.yang` revision
+  * Added options: `CLICON_CONFIG_EXTEND`
+  * Moved datastore-format datastype to clixon-lib
+* New `clixon-lib@2023-05-01.yang` revision
+  * Restructured and extended stats rpc to schema mountpoints
+  * rpc `<stats>` is not backward compatible
+* New `clixon-autocli@2023-05-01.yang` revision
+  * New `alias` and `skip` extensions (NOTE: just added in YANG, not implemented)
+  * New `grouping-treeref` option
+
+### C/CLI-API changes on existing features
+Developers may need to change their code
+
+* Added `uid`, `gid` and `fdkeep` parameters to `clixon_process_register()` for drop privs
+* Added output function to JSON output:
+  * `xml2json_vec(...,skiptop)` --> `xml2json_vec(..., cligen_output, skiptop)`
+* `yang2cli_yspec` removed last argument `printgen`.
+* Removed obsolete: `cli_auto_show()`
+
+### Minor features
+
+* Autocli optimization feature for generating smaller CLISPECs for large YANGs using treerefs
+   * New `grouping-treeref` option added to clixon-autocli.yang
+   * Default is disabled, set to true to generate smaller memory footprint of clixon_cli
+* Changed YANG uses/grouping to keep uses statement and flag it with YANG_FLAG_USES_EXP
+* Removed  extras/ and build-root/ build code since they are not properly maintained
+* Refactored cli-syntax code to use cligen pt_head instead (long overdue)
+* Modified backend exit strategy so that 2nd ^C actually exits
+* Performance: A change in the `merge` code made "co-located" config and non-config get retrieval go considerable faster. This is done by a specialized `xml_child_each_attr()` function.
+* CLI: Added `show statistics` example code for backend and CLI memory stats
+* [Support yang type union with are same subtypes with SNMP](https://github.com/clicon/clixon/pull/427)
+* Removed obsolete compile options introduced in 6.1:
+  * `NETCONF_DEFAULT_RETRIEVAL_REPORT_ALL`
+  * `AUTOCLI_DEPRECATED_HIDE`
+
+### Corrected Bugs
+
+* Fixed: [xpath // abbreviation does not work other than on the top-level](https://github.com/clicon/clixon/issues/435)
+* Fixed: [if-feature always negative if imported from another module](https://github.com/clicon/clixon/issues/429)
+* Fixed autocli edit modes for schema mounts
+
+## 6.2.0
+30 April 2023
+
+Clixon 6.2.0 brings no new major feature changes, but completes YANG
+schema mount and other features required by the clixon controller
+project, along with minor improvements and bugfixes.
+
+### API changes on existing protocol/config features
+Users may have to change how they access the system
+
+* Changed `configure --with-cligen=dir`
+  * <dir> is considered as `DESTDIR` and consider cligen installed under `DESTDIR/PREFIX`
+  * Changed from: consider cligen installed under `<dir>`
+* New `clixon-config@2023-03-01.yang` revision
+  * Added options:
+    * `CLICON_RESTCONF_NOALPN_DEFAULT`
+    * `CLICON_PLUGIN_DLOPEN_GLOBAL`
+  * Extended datastore-format with CLI and text
+* New `clixon-lib@2023-03-01.yang` revision
+  * Added creator meta-object
+
+### C/CLI-API changes on existing features
+Developers may need to change their code
+
+* C-API
+  * `clixon_xml2file` and `clixon_xml2cbuf` added `prefix` argument
+    * Example application is to add "+"/"-" for diffs
+    * Example change:
+      * `clixon_xml2file(f,x,p,f,s,a)` -> `clixon_xml2file(f,x,p,NULL,f,s,a)`
+      * `clixon_xml2cbuf(c,x,l,p,d,s)` -> `clixon_xml2cbuf(c,x,l,p,NULL,d,s)`
+  * `xmldb_validate` is removed. Yang checks should be enough, remnant of time before YANG checks.
+  * `xml_diff`: removed 1st `yspec` parameter
+  * `xml2xpath()`: Added `int apostrophe` as 4th parameter, default 0
+    * This is for being able to choose single or double quote as xpath literal quotes
+  * `clicon_msg_rcv`: Added `intr` parameter for interrupting on `^C` (default 0)
+  * Renamed include file: `clixon_backend_handle.h`to `clixon_backend_client.h`
+  * `candidate_commit()`: validate_level (added in 6.1) marked obsolete
+
+### Minor features
+
+* Adjusted to Openssl 3.0
+* Unified netconf input function
+  * Three different implementations were used in external, internal and controller code
+    * Internal netconf still not moved to unified
+  * The new clixon_netconf_input API unifies all three uses
+  * Code still experimental controlled by `NETCONF_INPUT_UNIFIED_INTERNAL`
+* RFC 8528 YANG schema mount
+  * Made cli/autocli mount-point-aware
+* Internal NETCONF (client <-> backend)
+  * Ensure message-id increments
+  * Separated rpc from notification socket in same session
+* Restconf: Added fallback mechanism for non-ALPN HTTPS
+  * Set `CLICON_RESTCONF_NOALPN_DEFAULT` to `http/2` or `http/1.1`
+  * For http/1 or http/2 only, that will be the default if no ALPN is set.
+* Fixed: [Add support decimal64 for SNMP](https://github.com/clicon/clixon/pull/422)
+
+### Corrected Bugs
+
+* Fixed RESTCONF race conditions on SSL_shutdown sslerr ZERO_RETURN appears occasionally and exits.
+* Fixed: RESTCONF: some client cert failure leads to restconf exit. Instead close and continue
+
+## 6.1.0
+19 Feb 2023
+
+The Clixon 6.1 release completes Network monitoring (RFC 6022) and introduces a first version of YANG schema mount (RFC 8528). The main focus has been interoperability and basic support for the ongoing [Clixon controller](https://github.com/clicon/clixon-controller) work.
+
+### New features
+
+* YANG schema mount RFC 8528
+  * The primary use-case is the clixon-controller but can be used independently
+  * New plugin callback: `ca_yang_mount`
+    * To specify which YANG modules should be mounted
+  * New plugin callback: `ca_yang_patch`
+    * A method to patch a YANG module
+  * To enable yang mounts, set new option `CLICON_YANG_SCHEMA_MOUNT` to `true`
+  * Restrictions:
+    * Only schema-ref=inline, not shared-schema
+    * Mount-points must be presence containers, regular containers or lists are not supported.
+* Netconf monitoring RFC 6022
+  * This is part 2, first part was in 6.0
+  * Datastores, sessions and statistics
+    * Added clixon-specific transport identities: cli, snmp, netconf, restconf
+    * Added source-host from native restonf, but no other transports
+    * Hello statistics is based on backend statistics, hellos from RESTCONF, SNMP and CLI clients are included and dropped external NETCONF sessions are not
+    * RFC 6022 "YANG Module for NETCONF Monitoring"
+  * See [Feature Request: Support RFC 6022 (NETCONF Monitoring)](https://github.com/clicon/clixon/issues/370)
+
+### API changes on existing protocol/config features
+
+Users may have to change how they access the system
+
+* Obsolete config options given in the configuration file are considered an error
+* New `clixon-config@2022-12-01.yang` revision
+  * Added option: 'CLICON_YANG_SCHEMA_MOUNT`
+  * Removed obsolete option: `CLICON_MODULE_LIBRARY_RFC7895`
 * clixon-lib,yang
   * Moved all extended internal NETCONF attributes to the clicon-lib namespace
+    * These are: content, depth, username, autocommit, copystartup, transport, source-host, objectcreate, objectexisted.
   * The internal attributes are documented in https://clixon-docs.readthedocs.io/en/latest/netconf.html
 * With-defaults default retrieval mode has changed from `REPORT-ALL` to `EXPLICIT`
   * This means that all get operations without `with-defaults` parameter do no longer
     return implicit default values, only explicitly set values.
   * Applies to NETCONF `<get>`, `<get-config>` and RESTCONF `GET`
-  * To keep backward-compatible behavior, define option `NETCONF_DEFAULT_RETRIEVAL_REPORT_ALL` in
-    include/clixon_custom.h
-  * Alternatively, change all get operation to include with-defaults parameter `report-all` 
+  * To keep backward-compatible behavior, define option `NETCONF_DEFAULT_RETRIEVAL_REPORT_ALL` in `include/clixon_custom.h`
+  * Alternatively, change all get operation to include with-defaults parameter `report-all`
 
 ### C/CLI-API changes on existing features
 Developers may need to change their code
@@ -85,28 +609,53 @@ Developers may need to change their code
     * Added netconf ssh subsystem
     * Renamed from `clixon` built in `docker/base`
 * C-API
-  * Added `clicon_handle` parameter to all `xml_bind_*` calls
-  * All calls to `clicon_log_xml()` changed to new function `clicon_debug_xml()`
-  * Changed type of `veclen` parameter to `size_t` in `xpath_vec_flag()`
-  * Added `with-defaults` parameter (default 0) to `xmldb_get0()`
-  * Added `sock_flags` parameter to `clixon_proc_socket()`
-  
+  * `xml2xpath()`: Added `int spec` as third parameter, default 0
+    * This was for making an xpath to a yang-mount point (only for yang-mount)
+    * Example change:
+      * `xml2xpath(x, n, xp)` -> `xml2xpath(x, n, 0, xp)`
+  * `xml_bind_*()` functions: Added `clicon_handle h` as first parameter
+    * Example change:
+      * `xml_bind_yang(x, y, yp, xe)` -> `xml_bind_yang(h, x, y, yp, xe)` ->
+  * `xmldb_get0()`: Added `with-defaults` parameter, default 0
+    * Example change:
+       * `xmldb_get0(0, db, yb, n, xp, c, x, m, x)` -> `xmldb_get0(0, db, yb, n, xp, c, WITHDEFAULTS_REPORT_ALL, x, m, x)`
+  * `candidate_commit()`: Add myid as fourth and validate_level as fifth parameter, default 0
+    * Example change:
+       * `candidate_commit(h, x, d, c)` -> `candidate_commit(h, x, d, 0, VL_FULL, c)`
+  * `xpath_vec_flag()`: Changed type of sixth `veclen` parameter to `size_t *`
+  * `clicon_log_xml()`: All calls changed to new function `clicon_debug_xml()`
+  * `clixon_proc_socket()`: Added `sock_flags` parameter
+
 ### Minor features
 
+* Misc. build fixes encountered when cross-compiling by @troglobit in https://github.com/clicon/clixon/pull/418
+* Update FAQ.md hello world example url by @jarrodb in https://github.com/clicon/clixon/pull/419
+* Done: [Request to suppress auto-completion for "deprecated" / "obsolete" status and warn the user.](https://github.com/clicon/clixon/issues/410)
+  * Implemented by:
+    * Not generating any autocli syntax for obsolete YANG statements,
+    * Hide statements for deprecated YANG statements.
+* New plugin callbacks
+  * `ca_yang_mount` - see the RFC 8528 support
+  * `ca_yang_patch` - for modifying existing YANG modules
 * Changed debug levels in `clicon_debug()` to be based on maskable flags:
   * Added flag names: `CLIXON_DBG_*`
   * Added maskable flags that can be combined when debugging:
     * `DEFAULT` = 1: Basic debug message, espcially initialization
     * `MSG` = 2: Input and output packets, read datastore
-    * `DETAIL` = 4: Details: message dump in hex, xpath parse trees, etc
-    * `EXTRA` = 8: Extra detailed logs
+    * `DETAIL` = 4: xpath parse trees, etc
+    * `EXTRA` = 8: Extra detailed logs, message dump in hex
 * Added `ISO/IEC 10646` encodings to XML parser: `&#[0-9]+;` and `&#[0-9a-fA-F]+;`
 * Added `CLIXON_CLIENT_SSH` to client API to communicate remotely via SSH netconf sub-system
 
 ### Corrected Bugs
 
+* Added translation from Yang type to SNMP type by @StasSt-siklu in https://github.com/clicon/clixon/pull/406
+* Fixed: [State XML validation error when CLICON_MODULE_LIBRARY_RFC7895=true and ietf-yang-library@2019-01-04 is loaded](https://github.com/clicon/clixon/issues/408)
+* Fixed: [SNMP: snmpwalk is slow and can timeout #404 ](https://github.com/clicon/clixon/issues/404)
 * Fixed: [SNMP accepts only u32 & u64 #405](https://github.com/clicon/clixon/issues/405)
 * Fixed: [Yang leaves without smiv2:oid directive are not shown well in snmpwalk #398](https://github.com/clicon/clixon/issues/398)
+  * Yang leaves without smiv2:oid directive are not shown well in]… by @doron2020 in https://github.com/clicon/clixon/pull/402
+
 * Fixed: [Netconf commit confirm session-id mismatch #407](https://github.com/clicon/clixon/issues/407)
 * Fixed: Initialized session-id to 1 instead of 0 following ietf-netconf.yang
 * Fixed: [snmpwalk doesn't show properly SNMP boolean values which equal false](https://github.com/clicon/clixon/issues/400)
@@ -157,7 +706,7 @@ Users may have to change how they access the system
   * Default value is `3`
 * NETCONF: Removed `message-id` from hello protocol following RFC 6241
   * See [message-id present on netconf app "hello"](https://github.com/clicon/clixon/issues/369)
-  
+
 ### C/CLI-API changes on existing features
 
 Developers may need to change their code
@@ -177,7 +726,7 @@ Developers may need to change their code
     * `myid` : Client-id of incoming message
     * `vlev` : validate level
     * Both parameters are default `0` for backward-compatibility
-  
+
 ### Minor features
 
 * Removed obsoleted compile-time options since 5.4:
@@ -274,12 +823,12 @@ Developers may need to change their code
      * For upgrade, add new sixth parameter and set it to `NULL`.
 * CLISPEC changes of cli show functions
   * For details of updated API, see https://clixon-docs.readthedocs.io/en/latest/cli.html#show-commands
-  * Changed `cli_show_auto()` 
+  * Changed `cli_show_auto()`
      * Added parameters for pretty-print, state and with-default
      * If the `<prefix>`is used, you need to change the call as follows:
         * `cli_show_auto(<db>, <format>, <prefix>)` -> `cli_show_auto(<db>, <format>, true, false, NULL, <prefix>)`
      * Otherwise the API is backward-compatible
-  * Changed `cli_show_config()` 
+  * Changed `cli_show_config()`
      * Added parameters for pretty-print, state and with-default
      * If the `<prefix>` parameter is used, you need to change the call as follows:
         * `cli_show_config(<db>, <format>, <xpath>, <ns>, <prefix>)` -> `cli_show_auto(<db>, <format>, <xpath>, <ns>, true, false, NULL, <prefix>)`
@@ -290,7 +839,7 @@ Developers may need to change their code
      * The first argument is removed. You need to change all calls as follows:
        * `cli_show_config(<treename>, <db>, ...` -> `cli_show_auto_menu(<db>, ...)`
      * The `cli_auto_show()` callback remains in 5.9.0 for backward compatible reasons, but will be removed in later releaes.
-      
+
 ### Minor features
 
 * Restconf:
@@ -299,7 +848,7 @@ Developers may need to change their code
 
 ### Corrected Bugs
 
-* Fixed: Leak in restconf http/1 data path: when multiple packets in same connection. 
+* Fixed: Leak in restconf http/1 data path: when multiple packets in same connection.
 * Fixed: [Replace operation](https://github.com/clicon/clixon/issues/350)
 * Fixed: [When multiple lists have same key name, need more elaborate error message in case of configuration having duplicate keys](https://github.com/clicon/clixon/issues/362)
   * Solved by implementing RFC7950 Sec 5.1 correctly
@@ -345,7 +894,7 @@ New features in Clixon 5.8.0 include a new SNMP frontend, YANG action and parsea
   * TEXT output format changed (see API changes)
   * FOr more info, see [user manual](https://clixon-docs.readthedocs.io/en/latest/datastore.html#other-formats)
   * See [Support performant load_config_file(...) for TEXT format](https://github.com/clicon/clixon/issues/324)
-	
+
 ### API changes on existing protocol/config features
 
 Users may have to change how they access the system
@@ -362,7 +911,7 @@ Users may have to change how they access the system
   * This does not change the semantics, but changes the way XML prefixes are used
   * Example augmented ipv4 into interface:
     * Previously: `<interface><ip:ipv4 xmlns:ip="urn:...:ietf-ip"><ip:enabled>...`
-    * Now: `<interface><ipv4 xmlns="urn:...:ietf-ip"><enabled>...` 
+    * Now: `<interface><ipv4 xmlns="urn:...:ietf-ip"><enabled>...`
 
 ### C/CLI-API changes on existing features
 
@@ -457,7 +1006,7 @@ Users may have to change how they access the system
           * `<if>a</if><if>b</if><if>c</if>
 	     <ifref>b</ifref>`
        * Existing behavior: expand to: `a, b, c`
-       * New default behavior: expand to: `b` 
+       * New default behavior: expand to: `b`
     * To keep existing behavior, set `<CLICON_CLI_EXPAND_LEAFREF>true<CLICON_CLI_EXPAND_LEAFREF>`
 
 * Restconf
@@ -467,7 +1016,7 @@ Users may have to change how they access the system
     * To keep existing end-of-message encoding, set `CLICON_NETCONF_BASE_CAPABILITY` to `0`
     * Added `clixon_netconf` command-line option `-0` and changed `-H` to `-1`
        * `-0` means dont send hello, but fix netconf base version to 0 and use EOM framing
-       * `-1` means dont send hello, but fix netconf base version to 1 and use chunked framing 
+       * `-1` means dont send hello, but fix netconf base version to 1 and use chunked framing
   * Error message `data-not-unique` changed to return schema nodes instead of XML for RFC7950 compliance
 * YANG
   * Instead of removing YANG which is disabled by `if-feature`, replace it with an yang `anydata` node.
@@ -575,7 +1124,7 @@ Users may have to change how they access the system
     * `CLICON_LOG_STRING_LIMIT`
     * `CLICON_YANG_LIBRARY`
   * Changed default value:
-    * `CLICON_MODULE_LIBRARY_RFC7895` to false  
+    * `CLICON_MODULE_LIBRARY_RFC7895` to false
   * Removed (previosly marked) obsolete options:
       * `CLICON_RESTCONF_PATH`
       * `CLICON_RESTCONF_PRETTY`
@@ -599,7 +1148,7 @@ Users may have to change how they access the system
 * Added RFC7951 parameter to `clixon_json_parse_string()` and `clixon_json_parse_file()`
   * If set, honor RFC 7951: JSON Encoding of Data Modeled with YANG, eg it requires module name prefixes
   * If not set, parse as regular JSON
-  
+
 ### Minor features
 
 * Added: [Strict auto completion for CLI argument expansion #163](https://github.com/clicon/clixon/issues/163)
@@ -642,7 +1191,7 @@ This release introduces a new autocli design with a clixon-autocli YANG file
        * Default is create edit-mode for all containers and list entries
      * New edit-mode tree: `@datamodelmode`
   * Moved hide extensions from `clixon-lib` to `clixon-autocli`
-    
+
 ### API changes on existing protocol/config features
 
 Users may have to change how they access the system
@@ -684,7 +1233,7 @@ Developers may need to change their code
   * Remove dependency of IETF YANGs on most tests
   * Remove dependency of example/main in most tests, instead make local copy of example yang
   * Changed `configure --with-yang-standard-installdir` to `configure --with-yang-standard-dir`
-  
+
 ### Corrected Bugs
 
 * Fixed: Autocli YANG patterns including `"` were not properly escaped: `\"`
@@ -713,7 +1262,7 @@ This release features lots of minor updates and bugfixes, an updated list pagina
 ### API changes on existing protocol/config features
 
 Users may have to change how they access the system
- 
+
 * Optional yangs for testing have been removed from the Clixon repo
   * As a consequence, the following configure options have been removed:
     * `configure --with-opt-yang-installdir=DIR`
@@ -726,11 +1275,11 @@ Users may have to change how they access the system
   * Stricter checking of outgoing RPC replies from server
   * See [RPC output not verified by yang](https://github.com/clicon/clixon/issues/283)
 * XML to JSON CDATA translation is NOT stripped
-  * Example, assume XML: `<s><![CDATA[  z > x  & x < y ]]></s>` 
+  * Example, assume XML: `<s><![CDATA[  z > x  & x < y ]]></s>`
   * Previous bevavior:
     * JSON: {"s":"  z > x  & x < y "}
   * New behavior:
-    * JSON: `{"s":"<![CDATA[  z > x  & x < y ]]>"}`  
+    * JSON: `{"s":"<![CDATA[  z > x  & x < y ]]>"}`
   * To keep old behavior, set `JSON_CDATA_STRIP` in clixon_custom.h
 * New `clixon-lib@2021-11-11.yang` revision
   * Modified option: RPC stats extended with YANG stats
@@ -797,7 +1346,7 @@ Developers may need to change their code
   * PR: [OpenConfig path compression](https://github.com/clicon/clixon/pull/276)
 * C API: Added set/get pointer API to clixon_data:
    * Added json/cli support for cli save/load
-   * clicon_ptr_get(), clicon_ptr_set(), 
+   * clicon_ptr_get(), clicon_ptr_set(),
 * Restconf YANG PATCH according to RFC 8072
   * Changed YANG PATCH enabling:
     * Now: `./configure --enable-yang-patch`
@@ -891,7 +1440,7 @@ Developers may need to change their code
 	        uint32_t         *remaining, // NEW
 	        cxobj            *xstate)
   ```
-  
+
 ### Minor features
 
 * Fuzzing:
@@ -986,7 +1535,7 @@ Users may have to change how they access the system
 * Changed config and install options for Restconf
   * clixon_restconf daemon is installed in `/usr/local/sbin` (as clixon_backend), instead of /www-data
     * `configure --with-wwwdir=<dir>` remains but only applies to fcgi socket and log
-    * New option `CLICON_RESTCONF_INSTALLDIR` is set to where clixon_restconf is installed, with default `/usr/local/sbin/` 
+    * New option `CLICON_RESTCONF_INSTALLDIR` is set to where clixon_restconf is installed, with default `/usr/local/sbin/`
   * Restconf drop privileges user is defined by `CLICON_RESTCONF_USER`
     * `configure --with-wwwuser=<user>` is removed
   * clixon_restconf drop of privileges is defined by `CLICON_RESTCONF_PRIVILEGES` option
@@ -1000,7 +1549,7 @@ Users may have to change how they access the system
   * Added: restconf `log-destination` (syslog or file:`/var/log/clixon_restconf.log`)
 * RESTCONF error replies have changed
   * Added Restconf-style xml/json message bodies everywhere
-    * Clixon removed the message body from many errors in the 4.6 version since they used html encoding. 
+    * Clixon removed the message body from many errors in the 4.6 version since they used html encoding.
     * However, the RFC Section 7.1 mandates to use RESTCONF-style message bodies.
 * RESTCONF in Clixon used empty key as "wildchar". But according to RFC 8040 it should mean the "empty string".
   * Example: `GET restconf/data/x:a=`
@@ -1029,13 +1578,13 @@ Developers may need to change their code
 * Added new startup-mode: `running-startup`: First try running db, if it is empty try startup db.
   * See [Can startup mode to be extended to support running-startup mode? #234](https://github.com/clicon/clixon/issues/234)
 * Restconf: added inline configuration using `-R <xml>` command line as an alternative to making advanced restconf configuration
-* New option `CLICON_RESTCONF_STARTUP_DONTUPDATE` added to disable RFC 8040 mandatory copy of running to startup after commit* 
+* New option `CLICON_RESTCONF_STARTUP_DONTUPDATE` added to disable RFC 8040 mandatory copy of running to startup after commit*
   * See [Need an option to disable restconf mandatory action of overwriting startup_db #230](https://github.com/clicon/clixon/issues/230)
 * Add default network namespace constant: `RESTCONF_NETNS_DEFAULT` with default value "default".
 * CLI: Two new hide variables added (thanks: shmuelnatan)
   * hide-database : specifies that a command is not visible in database. This can be useful for setting passwords and not exposing them to users.
   * hide-database-auto-completion : specifies that a command is not visible in database and in auto completion. This can be useful for a password that was put in device by super user, not be changed.
-	
+
 ### Corrected Bugs
 
 * Fixed: [uses oc-if:interface-ref error with openconfig #233](https://github.com/clicon/clixon/issues/233)
@@ -1073,7 +1622,7 @@ The 5.1 release contains more RESTCONF native mode restructuring, new multi-yang
     * Moved out event handling to clixon event handling
     * Moved out all ssl calls to clixon
     * Plan is to remove reliance on libevhtp and libevent altogether
-  * Extended status restconf process message with: 
+  * Extended status restconf process message with:
   * If `CLICON_BACKEND_RESTCONF_PROCESS` is set, RESTCONF is started as internal process from backend
     * Otherwise restconf daemon must be started externally by user, such as by systemd.
 * Netconf HELLO made mandatory
@@ -1086,7 +1635,7 @@ The 5.1 release contains more RESTCONF native mode restructuring, new multi-yang
   * Files and datastores supporting modstate also look for deleted or updated yang modules.
   * Stricter binding which gives error if loading outdated YANG file does not exist.
   * Keep old behavior: disable `CLICON_XMLDB_UPGRADE_CHECKOLD`.
-	
+
 ### API changes on existing protocol/config features
 
 Users may have to change how they access the system
@@ -1113,7 +1662,7 @@ Developers may need to change their code
   * To keep existing semantics: `str2cvec(...,cvp) -> str2cvec(...,1, cvp)`
 * Removed `cli_debug()`. Use `cli_debug_backend()` or `cli_debug_restconf()` instead.
 * Removed `yspec_free()` - replace with `ys_free()`
-* `xmldb_get0()`:  Added xerr output parameter to 
+* `xmldb_get0()`:  Added xerr output parameter to
 * `clixon_xml_parse_file()`: Removed `endtag` parameter.
 * Restconf authentication callback (ca_auth) signature changed (again)
   * Minor modification to 5.0 change: userp removed.
@@ -1497,7 +2046,7 @@ Users may have to change how they access the system
 * Fixed: [Type / Endianism problem in yang_parse_file #128](https://github.com/clicon/clixon/issues/128)
 * Fixed: [(CLI) the description of a used grouping is shown instead of the encapsulating container #124](https://github.com/clicon/clixon/issues/124)
   * Uses/group and augments only copies *schemanodes*. This means reference/description/.. etc are not copied, the original is kept. Also, as a side-effect of the bugfix, a final cardinality sanity check is now made after all yang modifications, not only at the time the file is loaded.
-  
+
 ## 4.6.0
 14 August 2020
 
@@ -1516,7 +2065,7 @@ Thanks Netgate for making this possible.
     * `--without-restconf      Disable restconf altogether`
   * SSL server and client certificates are supported.
   * SSE Stream notification is not yet supported.
-	
+
 ### API changes on existing protocol/config features
 
 Users may have to change how they access the system
@@ -1588,7 +2137,7 @@ Developers may need to change their code
   * `event_poll()` -> `clixon_event_poll()`
   * `event_loop()` -> `clixon_event_loop()`
   * `event_exit()` -> `clixon_event_exit()`
-  
+
 ### Minor changes
 
 These are new features that did not quite make it to the "Major features" list
@@ -1637,7 +2186,7 @@ optimizations. Note that this version must be run with CLIgen 4.5, it
 cannot run with CLIgen 4.4 or earlier.
 
 Thanks to everyone at Netgate for making this possible
-	
+
 ### Major New features
 
 * NACM RFC8341 datanode read and write paths
@@ -1648,7 +2197,7 @@ Thanks to everyone at Netgate for making this possible
   * ca_daemon: Called just after a server has "daemonized", ie put in background.
   * ca_trans_commit_done: Called when all plugin commits have been done.
     * Note: If you have used "end" callback and using transaction data, you should probably use this instead.
-  
+
 ### API changes on existing protocol/config features (For users)
 
 * Stricter validation detecting duplicate container or leaf in XML.
@@ -1669,11 +2218,11 @@ Thanks to everyone at Netgate for making this possible
   * Example: `transaction_data_t`
 * `xml_merge()` changed to use 3-value return: 1:OK, 0:Yang failed, -1: Error
 * Some function changed to use 3-value return: 1:OK, 0:Yang failed, -1: Error.
-  * Example: `xml_merge()` 
+  * Example: `xml_merge()`
 * `clixon_netconf_error(category, xerr, msg, arg)` removed first argument -> `clixon_netconf_error(xerr, msg, arg)`
 * CLI
   * `clicon_parse()`: Changed signature due to new cligen error and result handling:
-  * Removed: `cli_nomatch()`  
+  * Removed: `cli_nomatch()`
 
 ### Optimzations
 * Optimized namespace prefix checks at xml parse time: using many prefixes slowed down parsing considerably
@@ -1718,14 +2267,14 @@ features include optimized search functions and a repair callback.
   * Binary search optimization in lists for indexed leafs in all three formats.
     * This improves search performance to O(logN) which is drastical improvements for large lists.
   * You can also register explicit indexes for making binary search (not only list keys)
-  * For more info, see docs at [paths](https://clixon-docs.readthedocs.io/en/latest/paths.html) and 
+  * For more info, see docs at [paths](https://clixon-docs.readthedocs.io/en/latest/paths.html) and
 [search](https://clixon-docs.readthedocs.io/en/latest/xml.html#searching-in-xml)
-	
+
 ### API changes on existing protocol/config features (You may have have to change how you use Clixon)
 * In the bbuild system, you dont need to do `make install-include` for installing include files for compiling. This is now included in the actions done by `make install`.
 * State data is now ordered-by system for performance reasons. For example, alphabetically for strings and numeric for integers
   * Controlled by compile-time option `STATE_ORDERED_BY_SYSTEM`
-* Obsolete configuration options present in clixon configuration file will cause clixon application to exit at startup. 
+* Obsolete configuration options present in clixon configuration file will cause clixon application to exit at startup.
 * JSON
   * Empty values in JSON has changed to comply to RFC 7951
     * empty values of yang type `empty` are encoded as: `{"x":[null]}`
@@ -1788,7 +2337,7 @@ features include optimized search functions and a repair callback.
   * If fails, exit with error message, eg: `Yang error: Sanity check failed: LIST vsDataContainer lacks key statement which MUST be present (See RFC 7950 Sec 7.8.2)`
   * Can be disabled by setting `CLICON_CLICON_YANG_LIST_CHECK` to `false`
 * Replaced compile option `VALIDATE_STATE_XML` with runtime option `CLICON_VALIDATE_STATE_XML`.
-* Memory footprint 
+* Memory footprint
   * Namespace cache is populated on-demand, see `xml2ns()`.
   * CBUF start level is set to 256 (`CLICON_CLI_BUF_START` option)
   * Reduced xml child vector default size from 4 to 1 with quadratic growth to 64K then linear
@@ -1802,7 +2351,7 @@ features include optimized search functions and a repair callback.
 * C-code restructuring
   * clixon_yang.c partitioned and moved code into clixon_yang_parse_lib.c and clixon_yang_module.c and move back some code from clixon_yang_type.c.
     * partly to reduce size, but most important to limit code that accesses internal yang structures, only clixon_yang.c does this now.
-  
+
 ### Corrected Bugs
 
 * Fixed: Datastore read on startup got fixed default values.
@@ -1819,7 +2368,7 @@ features include optimized search functions and a repair callback.
 * Fixed: Pretty-printed XML using prefixes not parsed correctly.
   * eg `<a:x>   <y/></a:x>` could lead to errors, wheras (`<x>   <y/></x>`) works fine.
 * XML namespace merge bug fixed. Example: two xmlns attributes could both survive a merge whereas one should replace the other.
-* Compile option `VALIDATE_STATE_XML` introduced in `include/custom.h` to control whether code for state data validation is compiled or not. 
+* Compile option `VALIDATE_STATE_XML` introduced in `include/custom.h` to control whether code for state data validation is compiled or not.
 * Fixed: Validation of user state data led to wrong validation, if state relied on config data, eg leafref/must/when etc.
 * Fixed: No revision in yang module led to errors in validation of state data
 * Fixed: Leafref validation did not cover case of when the "path" statement is declared within a typedef, only if it was declared in the data part directly under leaf.
@@ -1840,7 +2389,7 @@ There were several issues with multiple namespaces with augmented yangs in 4.2 t
 * C-API
   * Changed `clicon_rpc_generate_error(msg, xerr)` to `clicon_rpc_generate_error(xerr, msg, arg)`
     * If you pass NULL as arg it produces the same message as before.
-  * Added namespace-context parameter `nsc` to `xpath_first` and `xpath_vec`, (`xpath_vec_nsc` and 
+  * Added namespace-context parameter `nsc` to `xpath_first` and `xpath_vec`, (`xpath_vec_nsc` and
 xpath_first_nsc` are removed).
   * Added clicon_handle as parameter to all `clicon_connect_` functions to get better error message
   * Added nsc parameter to `xmldb_get()`
@@ -1870,7 +2419,6 @@ xpath_first_nsc` are removed).
 * [xml_parse_string() is slow for a long XML string #96](https://github.com/clicon/clixon/issues/96)
 * Mandatory variables can no longer be deleted.
 * [Add missing includes](https://github.com/clicon/clixon/pulls)
-	
 
 ## 4.3.1
 2 February 2020
@@ -1879,7 +2427,7 @@ Patch release based on testing by Dave Cornejo, Netgate
 
 ### Corrected Bugs
 * XML namespace merge bug fixed. Example: two xmlns attributes could both survive a merge whereas one should replace the other.
-* Compile option `VALIDATE_STATE_XML` introduced in `include/custom.h` to control whether code for state data validation is compiled or not. 
+* Compile option `VALIDATE_STATE_XML` introduced in `include/custom.h` to control whether code for state data validation is compiled or not.
 * Fixed: Validation of user state data led to wrong validation, if state relied on config data, eg leafref/must/when etc.
 * Fixed: No revision in yang module led to errors in validation of state data
 * Fixed: Leafref validation did not cover case of when the "path" statement is declared within a typedef, only if it was declared in the data part directly under leaf.
@@ -1893,7 +2441,7 @@ Patch release based on testing by Dave Cornejo, Netgate
   * Called on startup after initial XML parsing, but before module-specific upgrades
   * Enabled by definign the `.ca_datastore_upgrade`
   * [General-purpose upgrade documentation](https://clixon-docs.readthedocs.io/en/latest/backend.html#general-purpose)
-  
+
 ### API changes on existing features (you may need to change your code)
 * Session-id CLI functionality delayed: "lazy evaluation"
   * C-api: Changed `clicon_session_id_get(clicon_handle h, uint32_t *id)`
@@ -1932,7 +2480,7 @@ The main improvement in this release concerns security in terms of privileges an
       * `drop_perm`  After initialization, drop privileges permanently
       * `drop_perm` After initialization, drop privileges temporarily (to a euid)
   * If dropped temporary, you can restore privileges with `restore_priv()`
-* The backend socket has now support of credentials of peer clients 
+* The backend socket has now support of credentials of peer clients
   * NACM users are cross-checked with client credentials (cli/netconf/restconf)
   * Only UNIX domain socket supports client credential checks (IP sockets do not).
   * Controlled by option CLICON_NACM_CREDENTIALS
@@ -1961,7 +2509,7 @@ a="urn:example:a" xmlns:b="urn:example:b"/>`
   * Added: CLICON_BACKEND_PRIVILEGES: If and how to drop privileges
   * Added: CLICON_NACM_CREDENTIALS: If and how to check backend socket privileges with NACM
   * Added: CLICON_NACM_RECOVERY_USER: Name of NACM recovery user.
-* Restconf top-level operations GET root resource modified to comply with RFC 8040 Sec 3.1 
+* Restconf top-level operations GET root resource modified to comply with RFC 8040 Sec 3.1
   * non-pretty print remove all spaces, eg `{"operations":{"clixon-example:client-rpc":[null]`
   * Replaced JSON `null` with `[null]` as proper empty JSON leaf/leaf-list encoding.
 * C-code change
@@ -1985,7 +2533,7 @@ a="urn:example:a" xmlns:b="urn:example:b"/>`
 * XPATH canonical form implemented for NETCONF get and get-config. This means that all callbacks (including state callbacks) will have the prefixes that corresponds to module prefixes. If an xpath have other prefixes (or null as default), they will be translated to canonical form before any callbacks.
   * Example of a canonical form: `/a:x/a:y`, then symbols must belong to a yang module with prefix `a`.
 * FreeBSD modifications: Configure, makefiles and test scripts modification for Freebsd
-	
+
 ### Corrected Bugs
 * Fixed CLI error messages on wrong cli_set/merge xml-key to eg:
   * `Config error: api-path syntax error \"/example:x/m1=%s\": rpc malformed-message List key m1 length mismatch : Invalid argument"`
@@ -2006,7 +2554,7 @@ a="urn:example:a" xmlns:b="urn:example:b"/>`
 4.1.0 is focussed on RFC 8040 RESTCONF features. Highlights include:
 - RFC8040 plain PATCH,
 - Query parameters: content, depth, insert, position
-- Standard return codes 
+- Standard return codes
 
 ### Major New features
 * Restconf RFC 8040 increased feature compliance
@@ -2135,7 +2683,7 @@ Olof Hagsand
   * Support for multiple patterns as described in RFC7950 Section 9.4.7
   * Support for inverted patterns as described in RFC7950 Section 9.4.6
   * Libxml2 support for full XSD matching as alternative to Posix translation
-    * Configure with: `./configure --with-libxml2`	
+    * Configure with: `./configure --with-libxml2`
     * Set `CLICON_YANG_REGEXP` to libxml2 (default is posix)
     * Note you need to configure cligen as well with `--with-libxml2`
   * Better compliance with XSD regexps in the default Posix translation regex mode
@@ -2185,7 +2733,7 @@ Olof Hagsand
   * Two config options control:
     * CLICON_XML_CHANGELOG enables the yang changelog feature
     * CLICON_XML_CHANGELOG_FILE where the changelog resides
-	
+
 ### API changes on existing features (you may need to change your code)
 
 * RESTCONF strict namespace validation of data in POST and PUT.
@@ -2226,7 +2774,7 @@ Olof Hagsand
   * All calls to the following functions must be changed: `hash_init`, `hash_free`, `hash_lookup`, `hash_value`, `hash_add`, `hash_del`, `hash_dump`, and `hash_keys`.
 * Replaced `CLIXON_DATADIR` with two configurable options defining where Clixon installs Yang files.
   * use `--with-yang-installdir=DIR` to install Clixon yang files in DIR
-  * use `--with-std-yang-installdir=DIR` to install standard yang files that Clixon may use in DIR 
+  * use `--with-std-yang-installdir=DIR` to install standard yang files that Clixon may use in DIR
   * Default is (as before) `/usr/local/share/clixon`
 * New clixon-config@2019-06-05.yang revision
   * Added: `CLICON_YANG_REGEXP, CLICON_CLI_TAB_MODE, CLICON_CLI_HIST_FILE, CLICON_CLI_HIST_SIZE, CLICON_XML_CHANGELOG, CLICON_XML_CHANGELOG_FILE`.
@@ -2242,9 +2790,9 @@ Olof Hagsand
 * Clixon transaction mechanism has changed which may affect your backend plugin callbacks:
   * Validate-only transactions are terminated by an `end` or `abort` callback. Now all started transactions are terminated either by an `end` or `abort` without exceptions
     * Validate-only transactions used to be terminated by `complete`
-  * If a commit user callback fails, a new `revert` callback will be made to plugins that have made a succesful commit. 
+  * If a commit user callback fails, a new `revert` callback will be made to plugins that have made a succesful commit.
     * Clixon used to play the (already made) commit callbacks in reverse order
-* Many validation functions have changed error parameter from cbuf to xml tree. 
+* Many validation functions have changed error parameter from cbuf to xml tree.
   * XML trees are more flexible for utility tools
   * If you use these(mostly internal), you need to change the error function: `generic_validate, from_validate_common, xml_yang_validate_all_top, xml_yang_validate_all, xml_yang_validate_add, xml_yang_validate_pprpc, xml_yang_validate_list_key_only`
 * Datastore cache and xmldb_get() changes:
@@ -2253,8 +2801,8 @@ Olof Hagsand
   * New suite of API functions enabling zero-copy: `xmldb_get0`. You can still use `xmldb_get()`. The call sequence of zero-copy is (see reference for more info):
 ```
    xmldb_get0(xh, "running", "/interfaces/interface[name="eth"]", 0, &xt, NULL);
-   xmldb_get0_clear(h, xt);     # Clear tree from default values and flags 
-   xmldb_get0_free(h, &xt);     # Free tree 
+   xmldb_get0_clear(h, xt);     # Clear tree from default values and flags
+   xmldb_get0_free(h, &xt);     # Free tree
 ```
   * Clixon config option `CLICON_XMLDB_CACHE` renamed to `CLICON_DATASTORE_CACHE` and changed type from `boolean` to `datastore_cache`
   * Type `datastore_cache` have values: nocache, cache, or cache-zerocopy
@@ -2339,11 +2887,11 @@ Olof Hagsand
 * Documented bug [Yang identityref XML encoding is not general #90](https://github.com/clicon/clixon/issues/90)
 * Added new API function `xpath_parse()` to split parsing and xml evaluation.
 * Rewrote `api_path2xpath` to handle namespaces.
-* `api_path2xml_vec` strict mode check added if list key length mismatch 
+* `api_path2xml_vec` strict mode check added if list key length mismatch
 * `startup_extraxml` triggers unnecessary validation
   * Renamed startup_db_reset -> xmldb_db_reset (its a general function)
   * In startup_extraxml(), check if reset callbacks or extraxml file actually makes and changes to the tmp db.
-* Print CLICON_YANG_DIR and CLICON_FEATURE lists on startup with debug flag 
+* Print CLICON_YANG_DIR and CLICON_FEATURE lists on startup with debug flag
 * Extended `util/clixon_util_xml` with yang and validate functionality so it can be used as a stand-alone utility for validating XML/JSON files
 * JSON parse and print improvements
   * Integrated parsing with namespace translation and yang spec lookup
@@ -2356,10 +2904,10 @@ Olof Hagsand
 * Improved submodule implementation (as part of [Yang submodule import prefix restrictions #60](https://github.com/clicon/clixon/issues/60)).
   * Submodules share same namespace as modules, which means that functions looking for symbols under a module were extended to also look in that module's included submodules, also recursively (submodules can include submodules in Yang 1.0).
   * Submodules are no longer merged with modules in the code. This is necessary to have separate local import prefixes, for example.
-  * New function `ys_real_module()` complements `ys_module()`. The latter gets the top module or submodule, whereas the former gets the ultimate module that a submodule belongs to. 
+  * New function `ys_real_module()` complements `ys_module()`. The latter gets the top module or submodule, whereas the former gets the ultimate module that a submodule belongs to.
   * See [test/test_submodule.sh]
 * New XMLDB_FORMAT added: `tree`. An experimental record-based tree database for
- direct access of records. 
+ direct access of records.
 * Netconf error handling modified
   * New option -e added. If set, the netconf client returns -1 on error.
 * A new minimal "hello world" example has been added
@@ -2387,7 +2935,7 @@ Olof Hagsand
 * Added specific clixon_suberrno code: XMLPARSE_ERRNO to identify XML parse errors.
 * Removed all dependency on strverscmp
 * Added libgen.h for baseline()
-	
+
 ### Corrected Bugs
 
 * Fixed: Return 404 Not found error if restconf GET does not return requested instance
@@ -2411,14 +2959,14 @@ Olof Hagsand
 * [Parent list key is not validated if not provided via RESTCONF #83](https://github.com/clicon/clixon/issues/83), thanks achernavin22.
 * [Invalid JSON if GET /operations via RESTCONF #82](https://github.com/clicon/clixon/issues/82), thanks achernavin22
 * List ordering bug - lists with ints as keys behaved wrongly and slow.
-* NACM read default rule did not work properly if nacm was enabled AND no groups were defined 
+* NACM read default rule did not work properly if nacm was enabled AND no groups were defined
 * Re-inserted `cli_output_reset` for what was erroneuos thought to be an obsolete function
   * See in 3.9.0 minor changes: Replaced all calls to (obsolete) `cli_output` with `fprintf`
 * Allowed Yang extended Xpath functions (syntax only):
   * re-match, deref, derived-from, derived-from-or-self, enum-value, bit-is-set
 * XSD regular expression handling of dash(`-`)
   *: Translate XDS `[xxx\-yyy]` to POSIX `[xxxyyy-]`.
-* YANG Anydata treated same as Anyxml 
+* YANG Anydata treated same as Anyxml
 * Bugfix: [Nodes from more than one of the choice's branches exist at the same time](https://github.com/clicon/clixon/issues/81)
   * Note it may still be possible to load a file with multiple choice elements via netconf, but it will not pass validate.
 * Bugfix: Default NACM policies applied even if NACM is disabled
@@ -2460,13 +3008,13 @@ Thanks for all bug reports, feature requests and support! Thanks to [Netgate](ht
     * Netconf `edit-config xpath select` statement, and all xpath statements
     * Notifications
     * CLI syntax (ie generated commands)
-  * The default namespace is ietf-netconf base syntax with uri: `urn:ietf:params:xml:ns:netconf:base:1.0` and need not be explicitly given. 
+  * The default namespace is ietf-netconf base syntax with uri: `urn:ietf:params:xml:ns:netconf:base:1.0` and need not be explicitly given.
   * The following example shows changes in netconf and restconf:
     * Accepted pre 3.9 (now not valid):
     ```
      <rpc>
        <my-own-method/>
-     </rpc> 
+     </rpc>
      <rpc-reply>
        <route>
          <address-family>ipv4</address-family>
@@ -2536,7 +3084,7 @@ Thanks for all bug reports, feature requests and support! Thanks to [Netgate](ht
   * [Clixon base container](docker/base).
   * [Clixon system and test container](docker/system) used in Travis CI.
   * See also: [Clixon docker hub](https://hub.docker.com/u/clixon)
-	
+
 ### API changes on existing features (you may need to change your code)
 * XML namespace handling is corrected (see [#major-changes])
   * For backward compatibility set config option  CLICON_XML_NS_LOOSE
@@ -2618,7 +3166,7 @@ Thanks for all bug reports, feature requests and support! Thanks to [Netgate](ht
 * Some restconf error messages contained `rpc-reply` or `rpc-error` which have now been removed.
 * getopt return value changed from char to int (https://github.com/clicon/clixon/issues/58)
 * Netconf/Restconf RPC extra input arguments are ignored (https://github.com/clicon/clixon/issues/47)
-	
+
 ## 3.8.0
 6 Nov 2018
 
@@ -2634,7 +3182,7 @@ Thanks for all bug reports, feature requests and support! Thanks to [Netgate](ht
    ```
   * logical combination of features not implemented, eg if-feature "not foo or bar and baz";
   * ietf-netconf yang module added with candidate, validate, startup and xpath features enabled.
-* YANG module library 
+* YANG module library
   * YANG modules according to RFC 7895 and implemented by ietf-yang-library.yang
   * Enabled by configuration option CLICON_MODULE_LIBRARY_RFC7895 - enabled by default
   * RFC 7895 defines a module-set-id. Configure option CLICON_MODULE_SET_ID is set and changed when modules change.
@@ -2667,7 +3215,7 @@ Thanks for all bug reports, feature requests and support! Thanks to [Netgate](ht
   * Old streams API which needs to be modified:
     * clicon_log_register_callback() removed
     * subscription_add() --> stream_add()
-    * stream_cb_add() --> stream_ss_add()	
+    * stream_cb_add() --> stream_ss_add()
     * stream_cb_delete() --> stream_ss_delete()
     * backend_notify() and backend_notify_xml() - use stream_notify() instead
   * Example uses "NETCONF" stream instead of "ROUTING"
@@ -2679,12 +3227,12 @@ Thanks for all bug reports, feature requests and support! Thanks to [Netgate](ht
   * clixon_netconf -S is obsolete. Use `clixon_netconf -l s` instead.
 * Comply to RFC 8040 3.5.3.1 rule: api-identifier = [module-name ":"] identifier
   * The "module-name" was a no-op before.
-  * This means that there was no difference between eg: GET /restconf/data/ietf-yang-library:modules-state and GET /restconf/data/foobar:modules-state 
+  * This means that there was no difference between eg: GET /restconf/data/ietf-yang-library:modules-state and GET /restconf/data/foobar:modules-state
 * Generilized top-level yang parsing functions
   * Clarified semantics of main yang module:
     * Command-line option -y MUST specify a filename
     * Configure option CLICON_YANG_MODULE_MAIN MUST specify a module name
-    * yang_parse() changed to take either filename or module name and revision. 
+    * yang_parse() changed to take either filename or module name and revision.
   * Removed clicon_dbspec_name() and clicon_dbspec_name_set().
   * Replace calls to yang_spec_main() with yang_spec_parse_module(). See for
     example backend_main() and others if you need details.
@@ -2694,7 +3242,7 @@ Thanks for all bug reports, feature requests and support! Thanks to [Netgate](ht
 * Renamed test/test_auth*.sh tests to test/test_nacm*.sh
 * YANG keywords "action" and "belongs-to" implemented by syntactically by parser (but not proper semantics).
 * clixon-config YAML file has new revision: 2018-10-21.
-* Allow new lines in CLI prompts 
+* Allow new lines in CLI prompts
 * uri_percent_encode() and xml_chardata_encode() changed to use stdarg parameters
 * Added Configure option CLIXON_DEFAULT_CONFIG=/usr/local/etc/clixon.xml as option and in example (so you dont need to provide -f command-line option).
 * New function: clicon_conf_xml() returns configuration tree
@@ -2707,17 +3255,17 @@ Thanks for all bug reports, feature requests and support! Thanks to [Netgate](ht
 * Single quotes for XML attributes https://github.com/clicon/clixon/issues/51
   * Thanks @SCadilhac
 * Fixed https://github.com/clicon/clixon/issues/46 Issue with empty values in leaf-list
-  * Thanks @achernavin22 
+  * Thanks @achernavin22
 * Identity without any identityref:s caused SEGV
 * Memory error in backend transaction revert
 * Set dir /www-data with www-data as owner, see https://github.com/clicon/clixon/issues/37
-	
+
 ### Known issues
 * Netconf/Restconf RPC extra input arguments are ignored
   * https://github.com/clicon/clixon/issues/47
 * Yang sub-command cardinality not checked.
   * https://github.com/clicon/clixon/issues/48
-* Issue with bare axis names (XPath 1.0) 
+* Issue with bare axis names (XPath 1.0)
   * https://github.com/clicon/clixon/issues/54
 * Top-level Yang symbol cannot be called "config" in any imported yang file.
   * datastore uses "config" as reserved keyword for storing any XML whoich collides with code for detecting Yang sanity.
@@ -2742,7 +3290,7 @@ Thanks for all bug reports, feature requests and support! Thanks to [Netgate](ht
   * Full suport of boolean constraints for "when"/"must", not only nodesets.
   * See also API changes below.
 * CDATA XML support (patch by David Cornejo, Netgate)
-  * Encode and decode (parsing) support 
+  * Encode and decode (parsing) support
 * Added cligen variable translation. Useful for processing input such as hashing, encryption.
   * More info in example and FAQ.
   * Example:
@@ -2810,7 +3358,7 @@ translate {
   * The example contains a more elaborate example.
   * Thanks ngashok for request, see https://github.com/clicon/clixon/issues/24
 * Added XML namespace (xmlns) validation
-  * for eg <a xmlns:x="uri"><x:b/></a> 
+  * for eg <a xmlns:x="uri"><x:b/></a>
 * ./configure extended with --enable-debug flag
   * CFLAGS=-g ./configure deprecated
 
@@ -2857,7 +3405,7 @@ translate {
     * CLICON_FIND_PLUGIN
     * clicon_valcb()
     * CLIXON_BACKEND_SYSDIR
-    * CLIXON_CLI_SYSDIR	
+    * CLIXON_CLI_SYSDIR
     * CLICON_MASTER_PLUGIN config variable
   * Example of migrating a backend plugin module:
     * Add all callbacks in a clixon_plugin_api struct
@@ -2921,7 +3469,7 @@ clixon_plugin_api *clixon_plugin_init(clicon_handle h)
 * Experimental: Added CLICON_TRANSACTION_MOD configuration option. If set,
   modifications in validation and commit callbacks are written back
   into the datastore. Requested by Stephen Jones, Netgate.
-* Invalid key to api_path2xml gives warning instead of error and quit.	
+* Invalid key to api_path2xml gives warning instead of error and quit.
 * Added restconf/operations get, see RFC8040 Sec 3.3.2:
 * yang_find_topnode() and api_path2xml() schemanode parameter replaced with yang_class. Replace as follows: 0 -> YC_DATANODE, 1 -> YC_SCHEMANODE
 
@@ -2941,7 +3489,7 @@ enables saved files to be used as datastore without any editing. Thanks Matt, Ne
 * Showing syntax using CLI commands was broekn and is fixed.
 * Fixed issue https://github.com/clicon/clixon/issues/18 RPC response issues reported by Stephen Jones at Netgate
 * Fixed issue https://github.com/clicon/clixon/issues/17 special character in strings can break RPCs reported by David Cornejo at Netgate.
-  * This was a large rewrite of XML parsing and output due to CharData not correctly encoded according to https://www.w3.org/TR/2008/REC-xml-20081126. 
+  * This was a large rewrite of XML parsing and output due to CharData not correctly encoded according to https://www.w3.org/TR/2008/REC-xml-20081126.
 * Fixed three-key list entry problem (reported by jdl@netgate)
 * Translate xml->json \n correctly
 * Fix issue: https://github.com/clicon/clixon/issues/15 Replace whole config
@@ -2959,11 +3507,11 @@ enables saved files to be used as datastore without any editing. Thanks Matt, Ne
 
 ### Major changes:
 * Major Restconf feature update to comply to RFC 8040. Thanks Stephen Jones of Netgate for getting right.
-  * GET: Always return object referenced (and nothing else). ie, GET /restconf/data/X returns X. 
+  * GET: Always return object referenced (and nothing else). ie, GET /restconf/data/X returns X.
   * GET Added support for the following resources: Well-known, top-level resource, and yang library version,
   * GET Single element JSON lists use {list:[element]}, not {list:element}.
   * PUT Whole datastore
-  
+
 ### Minor changes:
 
 * Changed signature of plugin_credentials() restconf callback. Added a "user" parameter. To enable authentication and in preparation for access control a la RFC 6536.
@@ -2972,7 +3520,7 @@ enables saved files to be used as datastore without any editing. Thanks Matt, Ne
   * `configure --with-startup-compat`. Configure option CLICON_USE_STARTUP_CONFIG is also obsoleted.
   * `configure --with-config-compat`. The template clicon.conf.cpp files are also removed.
   * `configure --with-xml-compat`
-  
+
 * New configuration option: CLICON_RESTCONF_PRETTY. Default true. Set to false to get more compact Restconf output.
 
 * Default configure file handling generalized by Renato Botelho/Matt Smith. Config file FILE is selected in the following priority order:
@@ -2981,12 +3529,12 @@ enables saved files to be used as datastore without any editing. Thanks Matt, Ne
   * Provide --with-sysconfig=<dir> when configuring, then FILE is <dir>/clixon.xml
   * Provide --sysconfig=<dir> when configuring then FILE is <dir>/etc/clixon.xml
   * FILE is /usr/local/etc/clixon.xml
-	
+
 ### Corrected Bugs
 * yang max keyword was not supported for string type. Corrected by setting "max" to MAXPATHLEN
 * Corrected "No yang spec" printed on tty when using leafref in CLI.
 * Fixed error in xml2cvec. If a (for example) int8 value has range error (eg 1000), it was treated as an error and the program terminated. Now this is just logged and skipped. Reported by Fredrik Pettai.
-	
+
 ### Known issues
 
 ## 3.4.0
@@ -2998,7 +3546,7 @@ enables saved files to be used as datastore without any editing. Thanks Matt, Ne
   * Added yang ordered-by user. The default (ordered-by system) will now sort lists and leaf-lists alphabetically to increase search performance. Note that this may change outputs.
   * If you need legacy order, either set CLICON_XML_SORT to false, or set that list to "ordered-by user".
   * This replaces XML hash experimental code, ie xml_child_hash variables and all xmlv_hash_ functions have been removed.
-  * Implementation detail: Cached keys are stored in in yang Y_LIST nodes as cligen vector, see ys_populate_list()  
+  * Implementation detail: Cached keys are stored in in yang Y_LIST nodes as cligen vector, see ys_populate_list()
 
 * Datastore cache introduced: cache XML tree in memory for faster get access.
   * Reads are cached. Writes are written to disk.
@@ -3019,7 +3567,7 @@ enables saved files to be used as datastore without any editing. Thanks Matt, Ne
   ```
       configure --with-xml-compat
   ```
-  
+
 ### Minor changes:
 * Better semantic versioning, eg MAJOR/MINOR/PATCH, where increment in PATCH does not change API.
 * Added CLICON_XMLDB_PRETTY option. If set to false, XML database files will be more compact.
@@ -3032,11 +3580,11 @@ enables saved files to be used as datastore without any editing. Thanks Matt, Ne
 * Fixed bug that deletes running on startup if backup started with -m running.
   When clixon starts again, running is lost.
   The error was that the running (or startup) configuration may fail when
-  clixon backend starts. 
+  clixon backend starts.
   The fix now makes a copy of running and copies it back on failure.
 * datastore/keyvalue/Makefile was left behind on make distclean. Fixed by conditional configure. Thanks renato@netgate.com.
 * Escape " in JSON names and strings and values
-  
+
 ### Known issues
 * Please use text datastore, key-value datastore no up-to-date
 
@@ -3066,13 +3614,13 @@ SUNET for support, requests, debugging, bugfixes and proposed solutions.
 	...
    </config>
   ```
-  
+
 * Simplified backend daemon startup modes.
   * The flags -IRCr are replaced with command-line option -s <mode>
   * You use the -s to select the mode. Example: `clixon_backend -s running`
   * You may also add a default method in the configuration file: `<CLICON_STARTUP_MODE>init</CLICON_STARTUP_MODE>`
   * The configuration option CLICON_USE_STARTUP_CONFIG is obsolete
-  * Command-ine option `-I` is replaced with `-s init` 
+  * Command-ine option `-I` is replaced with `-s init`
   * `-CIr` is replaced with `-s running`
   * Use `-s none` if you request no action on startu
   * Backward compatibility is enabled by:
@@ -3099,7 +3647,7 @@ plugin. The example application shows how.
 * Restconf: http cookie sent as attribute in rpc restconf_post operations to backend as "id" XML attribute.
 * Added option CLICON_CLISPEC_FILE as complement to CLICON_CLISPEC_DIR to
   specify single CLI specification file, not only directory containing files.
-	
+
 * Replaced the following cli_ functions with their original cligen_functions:
 	cli_exiting, cli_set_exiting, cli_comment,
 	cli_set_comment, cli_tree_add, cli_tree_active,
@@ -3134,24 +3682,24 @@ Aug 27 2017
 * leafref occuring within lists: cli expansion does not work
 
 ### Major changes:
-* Added support for YANG anyxml. 
+* Added support for YANG anyxml.
 
 * Changed top-level netconf get-config and get to return `<data>` instead of `<data><config>` to comply to the RFC.
   * If you use direct netconf get or get-config calls, you may need to handle the return XML differently.
   * RESTCONF and CLI is not affected.
-  * Example: 
+  * Example:
 
 ```
-  Query: 
-    <rpc><get/></rpc>  
-  New reply: 
+  Query:
+    <rpc><get/></rpc>
+  New reply:
     <rpc-reply>
        <data>
           <a/> # Example data model
        </data>
     </rpc-reply>
 
-  Old reply: 
+  Old reply:
     <rpc-reply>
        <data>
           <config>  # Removed
@@ -3163,14 +3711,14 @@ Aug 27 2017
 
 * Added support for yang presence and no-presence containers. Previous default was "presence".
   * Empty containers will be removed unless you have used the "presence" yang declaration.
-  * Example YANG without presence: 
+  * Example YANG without presence:
 
 ```
-     container 
-        nopresence { 
-          leaf j { 
-             type string; 
-          } 
+     container
+        nopresence {
+          leaf j {
+             type string;
+          }
      }
 ```
 
@@ -3202,8 +3750,8 @@ If you submit "nopresence" without a leaf, it will automatically be removed:
       curl -sS -X POST -d {"input":{"name":"hello"}} http://localhost/restconf/operations/myroute'
 ```
 
-* Enhanced leafref functionality: 
-  * Validation for leafref forward and backward references; 
+* Enhanced leafref functionality:
+  * Validation for leafref forward and backward references;
   * CLI completion for generated cli leafrefs for both absolute and relative paths.
   * Example, relative path:
 
@@ -3214,7 +3762,7 @@ If you submit "nopresence" without a leaf, it will automatically be removed:
              }
          }
 ```
-	
+
 * Added state data: Netconf `<get>` operation, new backend plugin callback: "plugin_statedata()" for retreiving state data.
   * You can use netconf: `<rpc><get/></rpc>` and it will return both config and state data.
   * Restconf GET will return state data also, if defined.
@@ -3235,7 +3783,7 @@ If you submit "nopresence" without a leaf, it will automatically be removed:
 * Generic map_str2int generic mapping tables
 * Removed vector return values from xmldb_get()
 * Generalized yang type resolution to all included (sub)modules not just the topmost
-	
+
 ## 3.3.1
 June 7 2017
 
@@ -3244,9 +3792,9 @@ June 7 2017
 * Removed non-standard api_path extension from the internal netconf protocol so that the internal netconf is now fully standard.
 
 * Strings in xmldb_put not properly encoded, eg eth/0 became eth.00000
-	
+
 ## 3.3.0 (May 2017)
-	
+
 * Datastore text module is now default.
 
 * Refined netconf "none" semantics in tests and text datastore
@@ -3265,7 +3813,7 @@ June 7 2017
 * Created xmldb plugin api
   Moved qdbm, chunk and  xmldb to datastore keyvalue directories
   Removed all other clixon dependency on chunk code
-	
+
 * cli_copy_config added as generic cli command
 * cli_show_config added as generic cli command
   Replace all show_confv*() and show_conf*() with cli_show_config()
@@ -3277,14 +3825,14 @@ June 7 2017
 * Many clicon special string functions have been removed
 * The netconf support has been extended with lock/unlock
 * clicon_rpc_call() has been removed and should be replaced by extending the
-  internal netconf protocol. 
-  See downcall() function in example/routing_cli.c and 
+  internal netconf protocol.
+  See downcall() function in example/routing_cli.c and
   routing_downcall() in example/routing_backend.c
 * Replace clicon_rpc_xmlput with clicon_rpc_edit_config
-* Removed xmldb daemon. All xmldb acceses is made backend daemon. 
+* Removed xmldb daemon. All xmldb acceses is made backend daemon.
   No direct accesses by clients to xmldb API.
   Instead use the rpc calls in clixon_proto_client.[ch]
-  In clients (eg cli/netconf) replace xmldb_get() in client code with 
+  In clients (eg cli/netconf) replace xmldb_get() in client code with
   clicon_rpc_get_config().
   If you use the vector arguments of xmldb_get(), replace as follows:
     xmldb_get(h, db, api_path, &xt, &xvec, &xlen);
@@ -3294,9 +3842,9 @@ June 7 2017
 
 * clicon_rpc_change() is replaced with clicon_rpc_edit_config().
   Note modify argument 5:
-     clicon_rpc_change(h, db, op, apipath, "value") 
+     clicon_rpc_change(h, db, op, apipath, "value")
   to:
-     clicon_rpc_edit_config(h, db, op, apipath, `"<config>value</config>"`) 
+     clicon_rpc_edit_config(h, db, op, apipath, `"<config>value</config>"`)
 
 * xmdlb_put_xkey() and xmldb_put_tree() have been folded into xmldb_put()
   Replace xmldb_put_xkey with xmldb_put as follows:
@@ -3317,7 +3865,7 @@ June 7 2017
 
 * Use restconf format for internal xmldb keys. Eg /a/b=3,4
 
-* List keys with special characters RFC 3986 encoded.	
+* List keys with special characters RFC 3986 encoded.
 
 * Replaced cli expand functions with single to multiple args
   This change is _not_ backward compatible
@@ -3326,7 +3874,7 @@ June 7 2017
 
 * Replaced cli callback functions with single arg to multiple args
   This change is _not_ backward compatible.
-  You are affected if you 
+  You are affected if you
   (1) use system callbacks (i.e. in clixon_cli_api.h)
   (2) write your own cli callbacks
 
@@ -3345,18 +3893,18 @@ June 7 2017
 ```
   and rewrite the code to handle argv instead of arg.
   These are the system functions affected:
-  cli_set, cli_merge, cli_del, cli_debug_backend, cli_set_mode, 
-  cli_start_shell, cli_quit, cli_commit, cli_validate, compare_dbs, 
+  cli_set, cli_merge, cli_del, cli_debug_backend, cli_set_mode,
+  cli_start_shell, cli_quit, cli_commit, cli_validate, compare_dbs,
   load_config_file, save_config_file, delete_all, discard_changes, cli_notify,
   show_yang, show_conf_xpath
 
 * Added --with-cligen and --with-qdbm configure options
-* Added union type check for non-cli (eg xml) input 
+* Added union type check for non-cli (eg xml) input
 * Empty yang type. Relaxed yang types for unions, eg two strings with different length.
-	
+
 ## (Dec 2016)
 * Dual license: both GPLv3 and APLv2
-	
+
 ## (Feb 2016)
 * Forked new clixon repository from clicon
 

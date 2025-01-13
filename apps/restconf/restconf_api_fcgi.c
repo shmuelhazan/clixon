@@ -59,7 +59,7 @@
 /* cligen */
 #include <cligen/cligen.h>
 
-/* clicon */
+/* clixon */
 #include <clixon/clixon.h>
 
 #include <fcgiapp.h> /* Need to be after clixon_xml-h due to attribute format */
@@ -67,8 +67,8 @@
 #include "restconf_lib.h"
 #include "restconf_api.h"  /* Virtual api */
 
-
 /*! HTTP headers done, if there is a message body coming next
+ *
  * @param[in]  req   Fastcgi request handle
  * @retval     body  Handle for body handling (in fcgi same as req)
  * 
@@ -77,7 +77,7 @@
  * XXX may be unecessary (or body start or something)
  */
 FCGX_Request *
-restconf_reply_body_start(void  *req0)
+restconf_reply_body_start(void *req0)
 {
     FCGX_Request *req = (FCGX_Request *)req0;
 
@@ -86,9 +86,12 @@ restconf_reply_body_start(void  *req0)
 }
 
 /*! Add HTTP header field name and value to reply, fcgi specific
+ *
  * @param[in]  req   Fastcgi request handle
  * @param[in]  name  HTTP header field name
  * @param[in]  vfmt  HTTP header field value format string w variable parameter
+ * @retval     0     OK
+ * @retval    -1     Error
  * @see eg RFC 7230
  */
 int
@@ -98,13 +101,13 @@ restconf_reply_header(void       *req0,
                       ...)
 {
     FCGX_Request *req = (FCGX_Request *)req0;
-    int        retval = -1;
-    size_t     vlen;
-    char      *value = NULL;
-    va_list    ap;
-    
+    int           retval = -1;
+    size_t        vlen;
+    char         *value = NULL;
+    va_list       ap;
+
     if (req == NULL || name == NULL || vfmt == NULL){
-        clicon_err(OE_CFG, EINVAL, "req, name or value is NULL");
+        clixon_err(OE_CFG, EINVAL, "req, name or value is NULL");
         return -1;
     }
     va_start(ap, vfmt);
@@ -112,18 +115,18 @@ restconf_reply_header(void       *req0,
     va_end(ap);
     /* allocate value string exactly fitting */
     if ((value = malloc(vlen+1)) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     /* second round: compute actual value */
-    va_start(ap, vfmt);    
+    va_start(ap, vfmt);
     if (vsnprintf(value, vlen+1, vfmt, ap) < 0){
-        clicon_err(OE_UNIX, errno, "vsnprintf");
+        clixon_err(OE_UNIX, errno, "vsnprintf");
         va_end(ap);
         goto done;
     }
     va_end(ap);
-    FCGX_FPrintF(req->out, "%s: %s\r\n", name, value); 
+    FCGX_FPrintF(req->out, "%s: %s\r\n", name, value);
     retval = 0;
  done:
     if (value)
@@ -132,9 +135,12 @@ restconf_reply_header(void       *req0,
 }
 
 /*! Add HTTP message body to reply, fcgi specific
+ *
  * @param[in]     req         Fastcgi request handle
  * @param[in,out] content_len This is for Content-Length header
  * @param[in]     bfmt        HTTP message body format string w variable parameter
+ * @retval        0           OK
+ * @retval       -1           Error
  * @see eg RFC 7230
  */
 int
@@ -144,14 +150,14 @@ restconf_reply_body_add(void     *req0,
                         ...)
 {
     FCGX_Request *req = (FCGX_Request *)req0;
-    int     retval = -1;
-    size_t  sz;
-    size_t  blen;
-    char   *body = NULL;
-    va_list ap;
+    int           retval = -1;
+    size_t        sz;
+    size_t        blen;
+    char         *body = NULL;
+    va_list       ap;
 
     if (req == NULL || bfmt == NULL){
-        clicon_err(OE_CFG, EINVAL, "req or body is NULL");
+        clixon_err(OE_CFG, EINVAL, "req or body is NULL");
         return -1;
     }
     va_start(ap, bfmt);
@@ -159,18 +165,18 @@ restconf_reply_body_add(void     *req0,
     va_end(ap);
     /* allocate body string exactly fitting */
     if ((body = malloc(blen+1)) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
     }
     /* second round: compute actual body */
-    va_start(ap, bfmt);    
+    va_start(ap, bfmt);
     if (vsnprintf(body, blen+1, bfmt, ap) < 0){
-        clicon_err(OE_UNIX, errno, "vsnprintf");
+        clixon_err(OE_UNIX, errno, "vsnprintf");
         va_end(ap);
         goto done;
     }
     va_end(ap);
-    FCGX_FPrintF(req->out, "%s", body); 
+    FCGX_FPrintF(req->out, "%s", body);
     /* Increment in/out Content-Length parameter */
     if (content_len){
         sz = strlen(body);
@@ -184,12 +190,14 @@ restconf_reply_body_add(void     *req0,
 }
 
 /*! Send HTTP reply with potential message body
- * @param[in]     req   Fastcgi request handle
- * @param[in]     code  Status code
- * @param[in]     cb    Body as a cbuf if non-NULL. Note is consumed
- * @param[in]     head  Only send headers, dont send body. 
- * 
+ *
  * Prerequisites: status code set, headers given, body if wanted set
+ * @param[in]  req   Fastcgi request handle
+ * @param[in]  code  Status code
+ * @param[in]  cb    Body as a cbuf if non-NULL. Note is consumed
+ * @param[in]  head  Only send headers, dont send body. 
+ * @retval     0     OK
+ * @retval    -1     Error
  */
 int
 restconf_reply_send(void  *req0,
@@ -199,7 +207,7 @@ restconf_reply_send(void  *req0,
 {
     FCGX_Request *req = (FCGX_Request *)req0;
     int           retval = -1;
-    const char *reason_phrase;
+    const char   *reason_phrase;
 
     FCGX_SetExitStatus(code, req->out);
     if ((reason_phrase = restconf_code2reason(code)) == NULL)
@@ -222,6 +230,7 @@ restconf_reply_send(void  *req0,
 }
 
 /*! Get input data from http request, eg such as curl -X PUT http://... <indata>
+ *
  * @param[in]  req        Fastcgi request handle
  * @retval     indata     
  * @retval     NULL       Error
@@ -231,8 +240,8 @@ cbuf *
 restconf_get_indata(void *req0)
 {
     FCGX_Request *req = (FCGX_Request *)req0;
-    int   c;
-    cbuf *cb = NULL;
+    int           c;
+    cbuf         *cb = NULL;
 
     if ((cb = cbuf_new()) == NULL)
         return NULL;

@@ -2,10 +2,11 @@
 
 The clixon project welcomes contributions from the community.
 
+Contributions are best done posting issues and pull requests. Discussions are welcome on the Matrix clixon forum https://matrix.to/#/#clixonforum:matrix.org.
+
 ## Licensing
 
-A contribution must follow the [CLIXON
-licensing](https://github.com/clicon/clixon/blob/master/LICENSE.md)
+A contribution must follow the [CLIXON licensing](https://github.com/clicon/clixon/blob/master/LICENSE.md)
 with the dual licensing: either Apache License, Version 2.0 or
 GNU General Public License Version 3.
 
@@ -44,10 +45,13 @@ static int myfn(int par1, my_structure *par2);
 
 ### Errors
 
+Error handling follows the "fail early and loud" principle. That is, unless a specific error-handling
+is identified, exit as soon as possible and with an explicit error log.
+
 Errors are typically declared as follows:
 ```
     if (myfn(0) < 0){
-       clicon_err(OE_UNIX, EINVAL, "myfn");
+       clixon_err(OE_UNIX, EINVAL, "myfn");
        goto done;
     }
 ```
@@ -63,7 +67,7 @@ In some cases, Clixon uses three-value returns as follows:
 - `0`  Invalid
 - `-1` Fatal error
 
-### Return values
+### Return values and goto:s
 
 Clixon uses goto:s only to get a single point of exit functions as follows:
 ```
@@ -79,11 +83,11 @@ Clixon uses goto:s only to get a single point of exit functions as follows:
 
 Notes:
 1. Use only a single return statement in a function
-2. Do not use of goto:s in other ways
+2. Do not use goto:s in other ways
 
 ### Comments
 
-Use `/* */`. Use `//` only for temporal comments.
+Use `/* */`. Use `//` only for temporary comments.
 
 Do not use "======", ">>>>>" or "<<<<<<" in comments since git merge conflict uses that.
 
@@ -123,7 +127,7 @@ where `ms_` is the prefix and is an abbreviation of `my_struct`.
 Try to avoid global variables.
 
 If you absolutely need a global variable, try to contain it as static within a
-single C-file, ie do not declare it extern and use it elsewhere. 
+single C-file, ie do not declare it extern and do not use it in other files.
 
 Also, always prepend a global variable with `_`, underscore.
 
@@ -138,3 +142,37 @@ include:
 - [CI on other platforms](https://github.com/clicon/clixon/tree/master/test/cicd). Other platforms include x86-64, 32-bit i686, and armv71
 - [Coverage tests](https://app.codecov.io/gh/clicon/clixon)
 - [Fuzzing](https://github.com/clicon/clixon/tree/master/test/fuzz) Fuzzing are run occasionally using AFL
+
+## Optimization
+
+Optimizating Clixon code should be based on an observable improvement
+of measurements of cycles or memory usage.
+
+Usually, new clixon code starts out with functional compliance
+with appropriate regression tests.
+
+Therafter "non-functional" analysis, including performance tests can
+be made. Performance improvements should be based on specific usecase
+and actual measurement. The benefit of an optimization should
+be larger than a potential increase of complexity.
+
+## How to document the code
+
+```
+/*! This is a small comment on one line
+ *
+ * This is a detailed description
+ * spanning several lines.
+ *
+ * Example usage:
+ * @code
+ *   fn(a, &b);
+ * @endcode
+ *
+ * @param[in]     src     This is a description of the first parameter
+ * @param[in,out] dest    This is a description of the second parameter
+ * @retval        0       This is a description of the return value
+ * @retval       -1       This is a description of another return value
+ * @see                   See also this function
+ */
+```

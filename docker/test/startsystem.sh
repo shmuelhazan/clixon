@@ -67,10 +67,14 @@ EOF
 # Patch to override YANG_INSTALLDIRS
 cat <<EOF >> /usr/local/bin/test/config.sh
 YANG_INSTALLDIR=/usr/local/share/clixon
+OPENCONFIG=/usr/local/share/openconfig/public
 EOF
 
 # Patch yang syntax errors
 sed -i s/=\ olt\'/=\ \'olt\'/g /usr/local/share/yang/standard/ieee/published/802.3/ieee802-ethernet-pon.yang
+
+# Generate ssh host keys
+ssh-keygen -A
 
 # Workaround for this error output:
 # sudo: setrlimit(RLIMIT_CORE): Operation not permitted
@@ -78,9 +82,7 @@ echo "Set disable_coredump false" > /etc/sudo.conf
 
 chmod 775 /usr/local/bin/test/site.sh 
 
-# Start clixon backend (tests will kill this)
-/usr/local/sbin/clixon_backend -D $DBG -s running -l e # logs on docker logs
->&2 echo "clixon_backend started"
+# No backend is started since tests dont require it
 
 # Start snmpd, we need this for the SNMP tests and the app clixon_snmp. Log to stdout, then we can
 # use Docker logs to see what's happening.

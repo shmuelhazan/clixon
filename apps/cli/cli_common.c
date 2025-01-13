@@ -1,7 +1,7 @@
 /*
  *
   ***** BEGIN LICENSE BLOCK *****
- 
+
   Copyright (C) 2009-2016 Olof Hagsand and Benny Holmgren
   Copyright (C) 2017-2019 Olof Hagsand
   Copyright (C) 2020-2022 Olof Hagsand and Rubicon Communications, LLC(Netgate)
@@ -25,14 +25,14 @@
   in which case the provisions of the GPL are applicable instead
   of those above. If you wish to allow use of your version of this file only
   under the terms of the GPL, and not to allow others to
-  use your version of this file under the terms of Apache License version 2, 
+  use your version of this file under the terms of Apache License version 2,
   indicate your decision by deleting the provisions above and replace them with
   the  notice and other provisions required by the GPL. If you do not delete
   the provisions above, a recipient may use your version of this file under
   the terms of any one of the Apache License version 2 or the GPL.
 
   ***** END LICENSE BLOCK *****
- * 
+ *
  */
 
 #ifdef HAVE_CONFIG_H
@@ -47,9 +47,7 @@
 #include <stdarg.h>
 #include <time.h>
 #include <ctype.h>
-
 #include <unistd.h>
-#include <dirent.h>
 #include <syslog.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -60,11 +58,12 @@
 #include <sys/param.h>
 #include <sys/mount.h>
 #include <pwd.h>
+#include <libgen.h>
 
 /* cligen */
 #include <cligen/cligen.h>
 
-/* clicon */
+/* clixon */
 #include <clixon/clixon.h>
 
 #include "clixon_cli_api.h"
@@ -72,20 +71,24 @@
 #include "cli_common.h"
 
 /*! Register log notification stream
- * @param[in] h       Clicon handle
+ *
+ * @param[in] h       Clixon handle
  * @param[in] stream  Event stream. CLICON is predefined, others are application-defined
  * @param[in] filter  Filter. For xml notification ie xpath: .[name="kalle"]
  * @param[in] status  0 for stop, 1 to start
  * @param[in] fn      Callback function called when notification occurs
  * @param[in] arg     Argument to function note
- * Note this calls cligen_regfd which may callback on cli command interpretator
+ * @retval    0       OK
+ * @retval   -1       Error
+ * @note this calls cligen_regfd which may callback on cli command interpretator
+ * @note  NYI: On stop, should call close_session on event socket, see https://github.com/clicon/clixon/issues/578
  */
 int
-cli_notification_register(clicon_handle    h, 
-                          char            *stream, 
+cli_notification_register(clixon_handle    h,
+                          char            *stream,
                           enum format_enum format,
-                          char            *filter, 
-                          int              status, 
+                          char            *filter,
+                          int              status,
                           int            (*fn)(int, void*),
                           void            *arg)
 {
@@ -99,16 +102,16 @@ cli_notification_register(clicon_handle    h,
 
     len = strlen("log_socket_") + strlen(stream) + 1;
     if ((logname = malloc(len)) == NULL){
-        clicon_err(OE_UNIX, errno, "malloc");
+        clixon_err(OE_UNIX, errno, "malloc");
         goto done;
-    }   
+    }
     snprintf(logname, len, "log_socket_%s", stream);
     if ((p = clicon_hash_value(cdat, logname, &len)) != NULL)
         s_exist = *(int*)p;
 
     if (status){ /* start */
         if (s_exist!=-1){
-            clicon_err(OE_PLUGIN, 0, "Result log socket already exists");
+            clixon_err(OE_PLUGIN, 0, "Result log socket already exists");
             goto done;
         }
         if (clicon_rpc_create_subscription(h, stream, filter, &s) < 0)
@@ -123,8 +126,8 @@ cli_notification_register(clicon_handle    h,
             cligen_unregfd(s_exist);
         }
         clicon_hash_del(cdat, logname);
-#if 0 /* cant turn off */
-        if (clicon_rpc_create_subscription(h, status, stream, format, filter, NULL) < 0)
+#ifdef NYI
+        if (clicon_rpc_close_session(h) < 0)
             goto done;
 #endif
     }
@@ -135,31 +138,33 @@ cli_notification_register(clicon_handle    h,
     return retval;
 }
 
-/* Signal functions, not exported to API */
+/* Signal functions
+ * This is for CLIgen to handle these signals, eg ^Ĉ means abort command, not program
+ */
 void
-cli_signal_block(clicon_handle h)
+cli_signal_block(clixon_handle h)
 {
-        clicon_signal_block (SIGTSTP);
-        clicon_signal_block (SIGQUIT);
-        clicon_signal_block (SIGCHLD);
-        if (!clicon_quiet_mode(h))
-            clicon_signal_block (SIGINT);
+    clicon_signal_block (SIGTSTP);
+    clicon_signal_block (SIGQUIT);
+    clicon_signal_block (SIGCHLD);
+    if (!clicon_quiet_mode(h))
+        clicon_signal_block (SIGINT);
 }
 
 void
-cli_signal_unblock(clicon_handle h)
+cli_signal_unblock(clixon_handle h)
 {
-        clicon_signal_unblock (SIGTSTP);
-        clicon_signal_unblock (SIGQUIT);
-        clicon_signal_unblock (SIGCHLD);
-        clicon_signal_unblock (SIGINT);
+    clicon_signal_unblock (SIGTSTP);
+    clicon_signal_unblock (SIGQUIT);
+    clicon_signal_unblock (SIGCHLD);
+    clicon_signal_unblock (SIGINT);
 }
 
 /*
  * Flush pending signals for a given signal type
  */
 void
-cli_signal_flush(clicon_handle h)
+cli_signal_flush(clixon_handle h)
 {
     /* XXX A bit rough. Use sigpending() and more clever logic ?? */
 
@@ -181,10 +186,15 @@ cli_signal_flush(clicon_handle h)
 }
 
 /*! Create body and add last CLI variable vector as value
- * Create and add an XML body as child of XML node xbot. Set its value to the last 
- * CLI variable vector element. 
+ *
+ * @param[in]  xbot
+ * @param[in]  cvv
+ * @retval     0    OK
+ * @retval    -1    Error
+ * Create and add an XML body as child of XML node xbot. Set its value to the last
+ * CLI variable vector element.
  */
-static int
+int
 dbxml_body(cxobj     *xbot,
            cvec      *cvv)
 {
@@ -195,13 +205,13 @@ dbxml_body(cxobj     *xbot,
     int     len;
 
     len = cvec_len(cvv);
-    cval = cvec_i(cvv, len-1); 
+    cval = cvec_i(cvv, len-1);
     if ((str = cv2str_dup(cval)) == NULL){
-        clicon_err(OE_UNIX, errno, "cv2str_dup");
+        clixon_err(OE_UNIX, errno, "cv2str_dup");
         goto done;
     }
     if ((xb = xml_new("body", xbot, CX_BODY)) == NULL)
-        goto done; 
+        goto done;
     if (xml_value_set(xb,  str) < 0)
         goto done;
     retval = 0;
@@ -212,9 +222,14 @@ dbxml_body(cxobj     *xbot,
 }
 
 /*! Special handling of identityref:s whose body may be: <namespace prefix>:<id>
+ *
  * Ensure the namespace is declared if it exists in YANG
+ * @param[in]  x
+ * @param[in]  arg
+ * @retval     0    OK
+ * @retval    -1    Error
 */
-static int
+int
 identityref_add_ns(cxobj *x,
                    void  *arg)
 {
@@ -232,7 +247,7 @@ identityref_add_ns(cxobj *x,
         yang_keyword_get(y) == Y_LEAF){
         if (yang_type_get(y, &origtype, &yrestype, NULL, NULL, NULL, NULL, NULL) < 0)
             goto done;
-        restype = yrestype?yang_argument_get(yrestype):NULL;            
+        restype = yrestype?yang_argument_get(yrestype):NULL;
         if (strcmp(restype, "identityref") == 0){
             if (nodeid_split(xml_body(x), &pf, NULL) < 0)
                 goto done;
@@ -243,11 +258,11 @@ identityref_add_ns(cxobj *x,
                 if (ns == NULL &&
                     (yns = yang_find_module_by_prefix_yspec(yspec, pf)) != NULL){
                     if ((ns = yang_find_mynamespace(yns)) != NULL)
-                            if (xmlns_set(x, pf, ns) < 0)
-                                goto done;
+                        if (xmlns_set(x, pf, ns) < 0)
+                            goto done;
                 }
             }
-        }        
+        }
     }
     retval = 0;
  done:
@@ -258,12 +273,106 @@ identityref_add_ns(cxobj *x,
     return retval;
 }
 
+/*! Given a top-level yspec and mountpoint xpath compute api-path
+ *
+ * Manipulate top-level and a mountpoint:
+ * YSPEC:    yspec0        yspec1
+ * XML:      top0-->bot0-->top1-->bot1
+ * API-PATH: api-path0     api-path1
+ *           api-path01---------
+ * The result computed from the top-level yspec and mountpoint xpath are:
+ * - api_pathfmt10 Combined api-path for both trees
+ * @param[in]  yspec0         Top-level yang-spec
+ * @param[in]  mtpoint        Mount-point, generic: if there are several with same yang, any will do
+ * @param[in]  api_path_fmt1  Second part of api-path-fmt
+ * @param[out] api_path_fmt01 Combined api-path-fmt
+ * @retval     0    OK
+ * @retval    -1    Error
+ */
+int
+mtpoint_paths(yang_stmt *yspec0,
+              char      *mtpoint,
+              char      *api_path_fmt1,
+              char     **api_path_fmt01)
+{
+    int        retval = -1;
+    yang_stmt *yu = NULL;
+    yang_stmt *ybot0 = NULL;
+    cvec      *nsc0 = NULL;
+    int        ret;
+    char      *api_path_fmt0 = NULL;
+    cbuf      *cb = NULL;
+    cxobj     *xbot0 = NULL;
+    cxobj     *xtop0 = NULL;
+    yang_stmt *yspec1;
+
+    if (api_path_fmt01 == NULL){
+        clixon_err(OE_FATAL, EINVAL, "arg is NULL");
+        goto done;
+    }
+    if ((xtop0 = xml_new(NETCONF_INPUT_CONFIG, NULL, CX_ELMNT)) == NULL)
+        goto done;
+    if ((cb = cbuf_new()) == NULL){
+        clixon_err(OE_UNIX, errno, "cbuf_new");
+        goto done;
+    }
+    if (yang_path_arg(yspec0, mtpoint, &yu) < 0)
+        goto done;
+    if (yu == NULL){
+        clixon_err(OE_FATAL, 0, "yu not found");
+        goto done;
+    }
+    if (yang_mount_get(yu, mtpoint, &yspec1) < 0)
+        goto done;
+    if (yspec1 == NULL){
+        clixon_err(OE_FATAL, 0, "yspec1 not found");
+        goto done;
+    }
+    xbot0 = xtop0;
+    if (xml_nsctx_yangspec(yspec0, &nsc0) < 0)
+        goto done;
+    if ((ret = xpath2xml(mtpoint, nsc0, xtop0, yspec0, &xbot0, &ybot0, NULL)) < 0)
+        goto done;
+    if (xbot0 == NULL){
+        clixon_err(OE_YANG, 0, "No xbot");
+        goto done;
+    }
+    if (yang2api_path_fmt(ybot0, 0, &api_path_fmt0) < 0)
+        goto done;
+    if (api_path_fmt0 == NULL){
+        clixon_err(OE_YANG, 0, "No api_path_fmt0");
+        goto done;
+    }
+    cprintf(cb, "%s%s", api_path_fmt0, api_path_fmt1);
+    if ((*api_path_fmt01 = strdup(cbuf_get(cb))) == NULL){
+        clixon_err(OE_YANG, errno, "strdup");
+        goto done;
+    }
+    retval = 0;
+ done:
+    if (cb)
+        cbuf_free(cb);
+    if (api_path_fmt0)
+        free(api_path_fmt0);
+    if (nsc0)
+        cvec_free(nsc0);
+    if (xtop0)
+        xml_free(xtop0);
+    return retval;
+}
+
 /*! Modify xml datastore from a callback using xml key format strings
- * @param[in]  h     Clicon handle
- * @param[in]  cvv   Vector of cli string and instantiated variables 
- * @param[in]  argv  Vector. First element xml key format string, eg "/aaa/%s"
+ *
+ * @param[in]  h     Clixon handle
+ * @param[in]  cvv   Vector of cli string and instantiated variables
+ * @param[in]  argv  Arguments given at the callback:
+ *   <api_path_fmt>  Generated API PATH (this is added implicitly, not actually given in the cvv)
+ *   <api_path_fmt>* Added by merge in treeref_merge_co
+ *   [<mt-point>]    Optional YANG path-arg/xpath from mount-point
  * @param[in]  op    Operation to perform on database
  * @param[in]  nsctx Namespace context for last value added
+ * @retval     0     OK
+ * @retval    -1     Error
  * cvv first contains the complete cli string, and then a set of optional
  * instantiated variables.
  * If the last node is a leaf, the last cvv element is added as a value. This value
@@ -274,70 +383,90 @@ identityref_add_ns(cxobj *x,
  * argv[0] = "/interfaces/interface/%s/type"
  * op: OP_MERGE
  * @see cli_callback_generate where arg is generated
- * @note The last value may require namespace binding present in nsctx. Note that the nsctx 
- *   cannot normally be supplied by the clispec functions, such as cli_set, but need to be 
+ * @note The last value may require namespace binding present in nsctx. Note that the nsctx
+ *   cannot normally be supplied by the clispec functions, such as cli_set, but need to be
  *   generated by a function such as clixon_instance_id_bind() or other programmatically.
  */
 int
-cli_dbxml(clicon_handle       h, 
-          cvec               *cvv, 
-          cvec               *argv, 
+cli_dbxml(clixon_handle       h,
+          cvec               *cvv,
+          cvec               *argv,
           enum operation_type op,
           cvec               *nsctx)
 {
     int        retval = -1;
-    char      *api_path_fmt;    /* xml key format */
-    char      *api_path = NULL; /* xml key */
-    cg_var    *arg;
+    cbuf      *api_path_fmt_cb = NULL;    /* xml key format */
+    char      *api_path_fmt;
+    char      *api_path_fmt01 = NULL;
+    char      *api_path = NULL;
     cbuf      *cb = NULL;
-    yang_stmt *yspec;
     cxobj     *xbot = NULL;     /* xpath, NULL if datastore */
     yang_stmt *y = NULL;        /* yang spec of xpath */
     cxobj     *xtop = NULL;     /* xpath root */
     cxobj     *xerr = NULL;
     int        ret;
     cg_var    *cv;
-    int        cvv_i = 0;
+    char      *str;
+    int        cvvi = 0;
+    char      *mtpoint = NULL;
+    yang_stmt *yspec0 = NULL;
+    int        argc = 0;
 
-    if (cvec_len(argv) != 1){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires one element to be xml key format string");
+    /* Top-level yspec */
+    if ((yspec0 = clicon_dbspec_yang(h)) == NULL){
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
         goto done;
     }
-    if ((yspec = clicon_dbspec_yang(h)) == NULL){
-        clicon_err(OE_FATAL, 0, "No DB_SPEC");
+    if ((api_path_fmt_cb = cbuf_new()) == NULL){
+        clixon_err(OE_UNIX, errno, "cbuf_new");
         goto done;
     }
-    arg = cvec_i(argv, 0);
-    api_path_fmt = cv_string_get(arg);
-
+    /* Concatenate all argv strings to a single string */
+    if (cvec_concat_cb(argv, api_path_fmt_cb) < 0)
+        goto done;
+    api_path_fmt = cbuf_get(api_path_fmt_cb);
+    if (cvec_len(argv) > 0){
+        argc = cvec_len(argv) - 1;
+        cv = cvec_i(argv, argc++);
+        str = cv_string_get(cv);
+        if (str && strncmp(str, "mtpoint:", strlen("mtpoint:")) == 0)
+            mtpoint = str + strlen("mtpoint:");
+    }
     /* Remove all keywords */
     if (cvec_exclude_keys(cvv) < 0)
         goto done;
-    /* Transform template format string + cvv to actual api-path 
-     * cvv_i indicates if all cvv entries were used
-     */
-    if (api_path_fmt2api_path(api_path_fmt, cvv, &api_path, &cvv_i) < 0)
-        goto done;
+    if (mtpoint){
+        /* Get and combined api-path01 */
+        if (mtpoint_paths(yspec0, mtpoint, api_path_fmt, &api_path_fmt01) < 0)
+            goto done;
+        /* Transform template format string + cvv to actual api-path
+         * cvvi indicates if all cvv entries were used
+         */
+        if (api_path_fmt2api_path(api_path_fmt01, cvv, yspec0, &api_path, &cvvi) < 0)
+            goto done;
+    }
+    else {
+        /* Only top-level tree */
+        /* Transform template format string + cvv to actual api-path
+         * cvvi indicates if all cvv entries were used
+         */
+        if (api_path_fmt2api_path(api_path_fmt, cvv, yspec0, &api_path, &cvvi) < 0)
+            goto done;
+    }
     /* Create config top-of-tree */
     if ((xtop = xml_new(NETCONF_INPUT_CONFIG, NULL, CX_ELMNT)) == NULL)
         goto done;
     xbot = xtop;
     if (api_path){
-        if ((ret = api_path2xml(api_path, yspec, xtop, YC_DATANODE, 1, &xbot, &y, &xerr)) < 0)
+        clixon_debug(CLIXON_DBG_XPATH, "api_path:%s", api_path);
+        if ((ret = api_path2xml(api_path, yspec0, xtop, YC_DATANODE, 1, &xbot, &y, &xerr)) < 0)
             goto done;
         if (ret == 0){
-            if ((cb = cbuf_new()) == NULL){
-                clicon_err(OE_UNIX, errno, "cbuf_new");
-                goto done;
-            }
-            cprintf(cb, "api-path syntax error \"%s\": ", api_path_fmt);
-            if (netconf_err2cb(xerr, cb) < 0)
-                goto done;
-            clicon_err(OE_CFG, EINVAL, "%s", cbuf_get(cb));
+            clixon_err_netconf(h, OE_CFG, EINVAL, xerr, "api-path syntax error \"%s\"", api_path_fmt);
             goto done;
         }
     }
-    if (xml_add_attr(xbot, "operation", xml_operation2str(op), NETCONF_BASE_PREFIX, NULL) < 0)
+    if (xml_add_attr(xbot, "operation", xml_operation2str(op), NETCONF_BASE_PREFIX, NULL) == NULL)
         goto done;
     /* Add body last in case of leaf */
     if (cvec_len(cvv) > 1 &&
@@ -350,7 +479,7 @@ cli_dbxml(clicon_handle       h,
          * Discussion: one can claim (1) is "bad" usage but one could see cases where
          * you would want to delete a value if it has a specific value but not otherwise
          */
-        if (cvv_i != cvec_len(cvv))
+        if (cvvi != cvec_len(cvv))
             if (dbxml_body(xbot, cvv) < 0)
                 goto done;
         /* Loop over namespace context and add them to this leaf node */
@@ -365,36 +494,43 @@ cli_dbxml(clicon_handle       h,
     /* Special handling of identityref:s whose body may be: <namespace prefix>:<id>
      * Ensure the namespace is declared if it exists in YANG
      */
-    if ((ret = xml_apply0(xbot, CX_ELMNT, identityref_add_ns, yspec)) < 0)
+    if ((ret = xml_apply0(xbot, CX_ELMNT, identityref_add_ns, yspec0)) < 0)
         goto done;
     if ((cb = cbuf_new()) == NULL){
-        clicon_err(OE_XML, errno, "cbuf_new");
+        clixon_err(OE_XML, errno, "cbuf_new");
         goto done;
     }
-    if (clixon_xml2cbuf(cb, xtop, 0, 0, -1, 0) < 0)
+    if (clixon_xml2cbuf(cb, xtop, 0, 0, NULL, -1, 0) < 0)
         goto done;
     if (clicon_rpc_edit_config(h, "candidate", OP_NONE, cbuf_get(cb)) < 0)
         goto done;
     retval = 0;
  done:
+    if (api_path_fmt_cb)
+        cbuf_free(api_path_fmt_cb);
+    if (api_path_fmt01)
+        free(api_path_fmt01);
     if (xerr)
         xml_free(xerr);
     if (cb)
         cbuf_free(cb);
     if (api_path)
-        free(api_path);  
+        free(api_path);
     if (xtop)
         xml_free(xtop);
     return retval;
 }
 
 /*! Set datastore xml entry
- * @param[in]  h    Clicon handle
- * @param[in]  cvv  Vector of cli string and instantiated variables 
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv  Vector of cli string and instantiated variables
  * @param[in]  argv Vector. First element xml key format string, eg "/aaa/%s"
+ * @retval     0    OK
+ * @retval    -1    Error
  */
-int 
-cli_set(clicon_handle h,
+int
+cli_set(clixon_handle h,
         cvec         *cvv,
         cvec         *argv)
 {
@@ -408,12 +544,15 @@ cli_set(clicon_handle h,
 }
 
 /*! Merge datastore xml entry
- * @param[in]  h    Clicon handle
- * @param[in]  cvv  Vector of cli string and instantiated variables 
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv  Vector of cli string and instantiated variables
  * @param[in]  argv Vector. First element xml key format string, eg "/aaa/%s"
+ * @retval     0    OK
+ * @retval    -1    Error
  */
-int 
-cli_merge(clicon_handle h,
+int
+cli_merge(clixon_handle h,
           cvec         *cvv,
           cvec         *argv)
 {
@@ -427,12 +566,15 @@ cli_merge(clicon_handle h,
 }
 
 /*! Create datastore xml entry
- * @param[in]  h    Clicon handle
- * @param[in]  cvv  Vector of cli string and instantiated variables 
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv  Vector of cli string and instantiated variables
  * @param[in]  argv Vector. First element xml key format string, eg "/aaa/%s"
+ * @retval     0    OK
+ * @retval    -1    Error
  */
-int 
-cli_create(clicon_handle h,
+int
+cli_create(clixon_handle h,
            cvec         *cvv,
            cvec         *argv)
 {
@@ -444,14 +586,18 @@ cli_create(clicon_handle h,
  done:
     return retval;
 }
+
 /*! Remove datastore xml entry
- * @param[in]  h    Clicon handle
- * @param[in]  cvv  Vector of cli string and instantiated variables 
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv  Vector of cli string and instantiated variables
  * @param[in]  argv Vector. First element xml key format string, eg "/aaa/%s"
+ * @retval     0    OK
+ * @retval    -1    Error
  * @see cli_del
  */
-int 
-cli_remove(clicon_handle h,
+int
+cli_remove(clixon_handle h,
            cvec         *cvv,
            cvec         *argv)
 {
@@ -465,12 +611,15 @@ cli_remove(clicon_handle h,
 }
 
 /*! Delete datastore xml
- * @param[in]  h    Clicon handle
- * @param[in]  cvv  Vector of cli string and instantiated variables 
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv  Vector of cli string and instantiated variables
  * @param[in]  argv Vector. First element xml key format string, eg "/aaa/%s"
+ * @retval     0    OK
+ * @retval    -1    Error
  */
-int 
-cli_del(clicon_handle h,
+int
+cli_del(clixon_handle h,
         cvec         *cvv,
         cvec         *argv)
 {
@@ -483,56 +632,73 @@ cli_del(clicon_handle h,
     return retval;
 }
 
-/*! Set debug level on CLI client (not backend daemon)
- * @param[in] h     Clicon handle
- * @param[in] vars  If variable "level" exists, its integer value is used
- * @param[in] arg   Else use the integer value of argument
- * @note The level is either what is specified in arg as int argument.
- *       _or_ if a 'level' variable is present in vars use that value instead.
+/*! Get debug level of CLI client
  */
 int
-cli_debug_cli(clicon_handle h, 
-               cvec         *vars, 
-               cvec         *argv)
+cli_debug_show(clixon_handle h,
+               cvec        *cvv,
+               cvec        *argv)
+{
+    cligen_output(stdout, "CLI debug:0x%x\n", clixon_debug_get());
+    return 0;
+}
+
+/*! Set debug level on CLI client (not backend daemon)
+ *
+ * @param[in] h     Clixon handle
+ * @param[in] cvv   If variable "level" exists, its integer value is used
+ * @param[in] arg   Else use the integer value of argument
+ * @retval    0     OK
+ * @retval   -1     Error
+ * @note The level is either what is specified in arg as int argument.
+ *       _or_ if a 'level' variable is present in cvv use that value instead.
+ */
+int
+cli_debug_cli(clixon_handle h,
+              cvec        *cvv,
+              cvec        *argv)
 {
     int     retval = -1;
     cg_var *cv;
     int     level;
 
-    if ((cv = cvec_find_var(vars, "level")) == NULL){
+    if ((cv = cvec_find_var(cvv, "level")) == NULL){
         if (cvec_len(argv) != 1){
-            clicon_err(OE_PLUGIN, EINVAL, "Requires either label var or single arg: 0|1");
+            clixon_err(OE_PLUGIN, EINVAL, "Requires either label var or single arg: 0|1");
             goto done;
         }
         cv = cvec_i(argv, 0);
     }
     level = cv_int32_get(cv);
     /* cli */
-    clicon_debug_init(level, NULL); /* 0: dont debug, 1:debug */
+    clixon_debug_init(h, level); /* 0: dont debug, 1:debug */
     retval = 0;
  done:
     return retval;
 }
 
 /*! Set debug level on backend daemon (not CLI)
- * @param[in] h     Clicon handle
- * @param[in] vars  If variable "level" exists, its integer value is used
+ *
+ * @param[in] h     Clixon handle
+ * @param[in] cvv  If variable "level" exists, its integer value is used
  * @param[in] arg   Else use the integer value of argument
+ * @retval    0     OK
+ * @retval   -1     Error
  * @note The level is either what is specified in arg as int argument.
- *       _or_ if a 'level' variable is present in vars use that value instead.
+ *       _or_ if a 'level' variable is present in cvv use that value instead.
  */
 int
-cli_debug_backend(clicon_handle h, 
-                  cvec         *vars, 
+cli_debug_backend(clixon_handle h,
+                  cvec         *cvv,
                   cvec         *argv)
 {
     int     retval = -1;
     cg_var *cv;
     int     level;
 
-    if ((cv = cvec_find_var(vars, "level")) == NULL){
+    if ((cv = cvec_find_var(cvv, "level")) == NULL){
         if (cvec_len(argv) != 1){
-            clicon_err(OE_PLUGIN, EINVAL, "Requires either label var or single arg: 0|1");
+            clixon_err(OE_PLUGIN, EINVAL, "Requires either label var or single arg: 0|1");
             goto done;
         }
         cv = cvec_i(argv, 0);
@@ -545,28 +711,31 @@ cli_debug_backend(clicon_handle h,
 }
 
 /*! Set debug level on restconf daemon
- * @param[in] h     Clicon handle
- * @param[in] vars  If variable "level" exists, its integer value is used
+ *
+ * @param[in] h     Clixon handle
+ * @param[in] cvv  If variable "level" exists, its integer value is used
  * @param[in] arg   Else use the integer value of argument
+ * @retval    0     OK
+ * @retval   -1     Error
  * @note The level is either what is specified in arg as int argument.
- *       _or_ if a 'level' variable is present in vars use that value instead.
+ *       _or_ if a 'level' variable is present in cvv use that value instead.
  * @notes
  *  1. clixon-restconf.yang is used (so that debug config can be set)
  *  2. AND the <restconf> XML is in running db not in clixon-config (so that restconf read the new config from backend)
  *  3 CLICON_BACKEND_RESTCONF_PROCESS is true (so that backend restarts restconf)
  */
 int
-cli_debug_restconf(clicon_handle h, 
-                   cvec         *vars, 
+cli_debug_restconf(clixon_handle h,
+                   cvec         *cvv,
                    cvec         *argv)
 {
     int     retval = -1;
     cg_var *cv;
     int     level;
 
-    if ((cv = cvec_find_var(vars, "level")) == NULL){
+    if ((cv = cvec_find_var(cvv, "level")) == NULL){
         if (cvec_len(argv) != 1){
-            clicon_err(OE_PLUGIN, EINVAL, "Requires either label var or single arg: 0|1");
+            clixon_err(OE_PLUGIN, EINVAL, "Requires either label var or single arg: 0|1");
             goto done;
         }
         cv = cvec_i(argv, 0);
@@ -578,19 +747,24 @@ cli_debug_restconf(clicon_handle h,
     return retval;
 }
 
-
 /*! Set syntax mode
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv
+ * @param[in]  argv
+ * @retval     0    OK
+ * @retval    -1    Error
  */
 int
-cli_set_mode(clicon_handle h, 
-              cvec         *vars, 
+cli_set_mode(clixon_handle h,
+              cvec         *cvv,
               cvec         *argv)
 {
     int     retval = -1;
     char   *str = NULL;
 
     if (cvec_len(argv) != 1){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires one element to be cli mode");
+        clixon_err(OE_PLUGIN, EINVAL, "Requires one element to be cli mode");
         goto done;
     }
     str = cv_string_get(cvec_i(argv, 0));
@@ -600,85 +774,17 @@ cli_set_mode(clicon_handle h,
     return retval;
 }
 
-/*! Start bash from cli callback
- * Typical usage: shell("System Bash") <source:rest>, cli_start_shell();
- * @param[in]   h     Clixon handle
- * @param[in]   cvv   Vector of command variables
- * @param[in]   argv  [<shell>], defaults to "sh"
- */ 
-int
-cli_start_shell(clicon_handle h, 
-                cvec         *vars, 
-                cvec         *argv)
-{
-    char          *cmd;
-    char          *shcmd = "sh";
-    struct passwd *pw;
-    int            retval = -1;
-    char           bcmd[128];
-    cg_var        *cv1 = cvec_i(vars, 1);
-    sigset_t       oldsigset;
-    struct sigaction oldsigaction[32] = {{{0,},},};
-    
-    if (cvec_len(argv) > 1){
-        clicon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected: [<shell>]",
-                   cvec_len(argv));
-        goto done;
-    }
-    if (cvec_len(argv) == 1){
-        shcmd = cv_string_get(cvec_i(argv, 0));
-    }
-    cmd = (cvec_len(vars)>1 ? cv_string_get(cv1) : NULL);
-    if ((pw = getpwuid(getuid())) == NULL){
-        clicon_err(OE_UNIX, errno, "getpwuid");
-        goto done;
-    }
-    if (chdir(pw->pw_dir) < 0){
-        clicon_err(OE_UNIX, errno, "chdir");
-        endpwent();
-        goto done;
-    }
-    endpwent();
-
-    if (clixon_signal_save(&oldsigset, oldsigaction) < 0)
-        goto done;
-    cli_signal_flush(h);
-    cli_signal_unblock(h);
-    if (cmd){
-        snprintf(bcmd, 128, "%s -c \"%s\"", shcmd, cmd);
-        if (system(bcmd) < 0){
-            cli_signal_block(h);
-            clicon_err(OE_UNIX, errno, "system(bash -c)");
-            goto done;
-        }
-    }
-    else{
-        snprintf(bcmd, 128, "%s ", shcmd); /* -l (login shell) but is applicable to bash only */
-        if (system(bcmd) < 0){
-            cli_signal_block(h);
-            clicon_err(OE_UNIX, errno, "system(bash)");
-            goto done;
-        }
-    }
-    cli_signal_block(h);
-#if 0 /* Allow errcodes from bash */
-    if (retval != 0){
-        clicon_err(OE_UNIX, errno, "system(%s) %d", cmd, retval);
-        goto done;
-    }
-#endif
-    if (clixon_signal_restore(&oldsigset, oldsigaction) < 0)
-        goto done;
-    retval = 0;
- done:
-    return retval;
-}
-
 /*! Generic quit callback
+ *
+ * @param[in] h      Clixon handle
+ * @param[in] cvv    Vector of command variables
+ * @param[in] argv   None expected
+ * @retval    0      OK
+ * @retval   -1      Error
  */
-int 
-cli_quit(clicon_handle h, 
-          cvec         *vars, 
+int
+cli_quit(clixon_handle h,
+          cvec         *cvv,
           cvec         *argv)
 {
     cligen_exiting_set(cli_cligen(h), 1);
@@ -686,30 +792,34 @@ cli_quit(clicon_handle h,
 }
 
 /*! Generic commit callback
+ *
+ * @param[in]  h    Clixon handle
+ * @param[in]  cvv  Vector of command variables
  * @param[in]  argv No arguments expected
+ * @retval     0    OK
+ * @retval    -1    Error
  */
 int
-cli_commit(clicon_handle h, 
-            cvec         *vars, 
-            cvec         *argv)
+cli_commit(clixon_handle h,
+           cvec         *cvv,
+           cvec         *argv)
 {
-    int            retval = -1;
-    uint32_t       timeout = 0; /* any non-zero value means "confirmed-commit" */
-    cg_var        *timeout_var;
-    char          *persist = NULL;
-    char          *persist_id = NULL;
+    int      retval = -1;
+    uint32_t timeout = 0; /* any non-zero value means "confirmed-commit" */
+    cg_var  *timeout_var;
+    char    *persist = NULL;
+    char    *persist_id = NULL;
+    int      confirmed;
+    int      cancel;
 
-    int confirmed = (cvec_find_str(vars, "confirmed") != NULL);
-    int cancel = (cvec_find_str(vars, "cancel") != NULL);
-
-    if ((timeout_var = cvec_find(vars, "timeout")) != NULL) {
+    confirmed = (cvec_find_str(cvv, "confirmed") != NULL);
+    cancel = (cvec_find_str(cvv, "cancel") != NULL);
+    if ((timeout_var = cvec_find(cvv, "timeout")) != NULL) {
         timeout = cv_uint32_get(timeout_var);
-        clicon_debug(1, "commit confirmed with timeout %ul", timeout);
+        clixon_debug(CLIXON_DBG_CLI, "commit confirmed with timeout %ul", timeout);
     }
-
-    persist = cvec_find_str(vars, "persist-val");
-    persist_id = cvec_find_str(vars, "persist-id-val");
-    
+    persist = cvec_find_str(cvv, "persist-val");
+    persist_id = cvec_find_str(cvv, "persist-id-val");
     if (clicon_rpc_commit(h, confirmed, cancel, timeout, persist, persist_id) < 1)
         goto done;
     retval = 0;
@@ -718,10 +828,15 @@ cli_commit(clicon_handle h,
 }
 
 /*! Generic validate callback
+ * @param[in]  h     Clixon handle
+ * @param[in]  cvv   Vector of command variables
+ * @param[in]  argv
+ * @retval     0     OK
+ * @retval    -1     Error
  */
 int
-cli_validate(clicon_handle h, 
-              cvec         *vars, 
+cli_validate(clixon_handle h,
+              cvec         *cvv,
               cvec         *argv)
 {
     int     retval = -1;
@@ -733,140 +848,141 @@ cli_validate(clicon_handle h,
     return retval;
 }
 
-/*! Compare two dbs using XML. Write to file and run diff
+/*! Compare two datastore by name and formats
+ *
+ * @param[in]  h      Clixon handle
+ * @param[in]  format Output format
+ * @param[in]  db1    Name of first datastrore
+ * @param[in]  db2    Name of second datastrore
+ * @retval     0      OK
+ * @retval    -1      Error
+ * @note JSON and CLI are NYI
  */
-static int
-compare_xmls(cxobj           *xc1,
-             cxobj           *xc2,
-             enum format_enum format)
+int
+compare_db_names(clixon_handle    h,
+                 enum format_enum format,
+                 char            *db1,
+                 char            *db2)
 {
-    int    fd;
-    FILE  *f;
-    char   filename1[MAXPATHLEN];
-    char   filename2[MAXPATHLEN];
-    int    retval = -1;
-    cbuf  *cb = NULL;
+    int              retval = -1;
+    cxobj           *xc1 = NULL;
+    cxobj           *xc2 = NULL;
+    cxobj           *xerr = NULL;
+    cbuf            *cb = NULL;
 
-    snprintf(filename1, sizeof(filename1), "/tmp/cliconXXXXXX");
-    snprintf(filename2, sizeof(filename2), "/tmp/cliconXXXXXX");
-    if ((fd = mkstemp(filename1)) < 0){
-        clicon_err(OE_UNDEF, errno, "tmpfile");
+    if (clicon_rpc_get_config(h, NULL, db1, "/", NULL, NULL, &xc1) < 0)
+        goto done;
+    if ((xerr = xpath_first(xc1, NULL, "/rpc-error")) != NULL){
+        if (clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Get configuration") < 0)
+            goto done;
         goto done;
     }
-    if ((f = fdopen(fd, "w")) == NULL)
+    if (clicon_rpc_get_config(h, NULL, db2, "/", NULL, NULL, &xc2) < 0)
         goto done;
-    switch(format){
-    case FORMAT_TEXT:
-        if (clixon_txt2file(f, xc1, 0, cligen_output, 1, 1) < 0)
+    if ((xerr = xpath_first(xc2, NULL, "/rpc-error")) != NULL){
+        if (clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Get configuration") < 0)
             goto done;
-        break;
+        goto done;
+    }
+    /* Note that XML and TEXT uses a (new) structured in-mem algorithm while
+     * JSON and CLI uses (old) UNIX file diff.
+     */
+    switch (format){
     case FORMAT_XML:
-    default:
-        if (clixon_xml2file(f, xc1, 0, 1, cligen_output, 1, 1) < 0)
+        if ((cb = cbuf_new()) == NULL){
+            clixon_err(OE_UNIX, errno, "cbuf_new");
             goto done;
+        }
+        if (clixon_xml_diff2cbuf(cb, xc1, xc2) < 0)
+            goto done;
+        cligen_output(stdout, "%s", cbuf_get(cb));
         break;
-    }
-    fclose(f);
-    close(fd);
-
-    if ((fd = mkstemp(filename2)) < 0){
-        clicon_err(OE_UNDEF, errno, "mkstemp: %s", strerror(errno));
-        goto done;
-    }
-    if ((f = fdopen(fd, "w")) == NULL)
-        goto done;
-
-    switch(format){
     case FORMAT_TEXT:
-        if (clixon_txt2file(f, xc2, 0, cligen_output, 1, 1) < 0)
+        if ((cb = cbuf_new()) == NULL){
+            clixon_err(OE_UNIX, errno, "cbuf_new");
             goto done;
+        }
+        if (clixon_text_diff2cbuf(cb, xc1, xc2) < 0)
+            goto done;
+        cligen_output(stdout, "%s", cbuf_get(cb));
         break;
-    case FORMAT_XML:
+    case FORMAT_JSON:         /* XXX NYI */
+    case FORMAT_CLI:
+        if (clixon_compare_xmls(xc1, xc2, format) < 0) /* astext? */
+            goto done;
     default:
-        if (clixon_xml2file(f, xc2, 0, 1, cligen_output, 1, 1) < 0)
-            goto done;
         break;
     }
-
-    fclose(f);
-    close(fd);
-
-    if ((cb = cbuf_new()) == NULL){
-        clicon_err(OE_CFG, errno, "cbuf_new");
-        goto done;
-    }
-    cprintf(cb, "diff -dU 1 %s %s |  grep -v @@ | sed 1,2d",
-            filename1, filename2);
-    if (system(cbuf_get(cb)) < 0)
-        goto done;
-
     retval = 0;
   done:
     if (cb)
         cbuf_free(cb);
-    unlink(filename1);
-    unlink(filename2);
-    return retval;
-}
-
-/*! Compare two dbs using XML. Write to file and run diff
- * @param[in]   h     Clicon handle
- * @param[in]   cvv  
- * @param[in]   argv  arg: 0 as xml, 1: as text
- */
-int
-compare_dbs(clicon_handle h, 
-            cvec         *cvv, 
-            cvec         *argv)
-{
-    cxobj *xc1 = NULL; /* running xml */
-    cxobj *xc2 = NULL; /* candidate xml */
-    cxobj *xerr = NULL;
-    int    retval = -1;
-    enum format_enum format;
-
-    if (cvec_len(argv) > 1){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires 0 or 1 element. If given: astext flag 0|1");
-        goto done;
-    }
-    if (cvec_len(argv) && cv_int32_get(cvec_i(argv, 0)) == 1)
-        format = FORMAT_TEXT;
-    else
-        format = FORMAT_XML;
-    if (clicon_rpc_get_config(h, NULL, "running", "/", NULL, NULL, &xc1) < 0)
-        goto done;
-    if ((xerr = xpath_first(xc1, NULL, "/rpc-error")) != NULL){
-        clixon_netconf_error(xerr, "Get configuration", NULL);
-        goto done;
-    }
-    if (clicon_rpc_get_config(h, NULL, "candidate", "/", NULL, NULL, &xc2) < 0)
-        goto done;
-    if ((xerr = xpath_first(xc2, NULL, "/rpc-error")) != NULL){
-        clixon_netconf_error(xerr, "Get configuration", NULL);
-        goto done;
-    }
-    if (compare_xmls(xc1, xc2, format) < 0) /* astext? */
-        goto done;
-    retval = 0;
-  done:
     if (xc1)
-        xml_free(xc1);    
+        xml_free(xc1);
     if (xc2)
         xml_free(xc2);
     return retval;
 }
 
+/*! Compare two dbs using XML. Write to file and run diff
+ *
+ * @param[in]   h     Clixon handle
+ * @param[in]   cvv
+ * @param[in]   argv  <db1> <db2> <format>
+ * @retval      0     OK
+ * @retval     -1     Error
+ */
+int
+compare_dbs(clixon_handle h,
+            cvec         *cvv,
+            cvec         *argv)
+{
+    int              retval = -1;
+    enum format_enum format;
+    char            *db1;
+    char            *db2;
+    char            *formatstr;
+
+    if (cvec_len(argv) != 3){
+        clixon_err(OE_PLUGIN, EINVAL, "Expected arguments: <db1> <db2> <format>");
+        goto done;
+    }
+    db1 = cv_string_get(cvec_i(argv, 0));
+    db2 = cv_string_get(cvec_i(argv, 1));
+    formatstr = cv_string_get(cvec_i(argv, 2));
+    if ((format = format_str2int(formatstr)) < 0){
+        clixon_err(OE_XML, 0, "format not found %s", formatstr);
+        goto done;
+    }
+    /* Special default format handling */
+    if (format == FORMAT_DEFAULT){
+        formatstr = clicon_option_str(h, "CLICON_CLI_OUTPUT_FORMAT");
+        if ((int)(format = format_str2int(formatstr)) < 0){
+            clixon_err(OE_PLUGIN, 0, "Not valid format: %s", formatstr);
+            goto done;
+        }
+    }
+    if (compare_db_names(h, format, db1, db2) < 0)
+        goto done;
+    retval = 0;
+ done:
+    return retval;
+}
+
 /*! Load a configuration file to candidate database
+ *
  * Utility function used by cligen spec file
  * Note that the CLI function makes no Validation of the XML sent to the backend
- * @param[in] h     CLICON handle
+ * @param[in] h     Clixon handle
  * @param[in] cvv   Vector of variables (where <varname> is found)
  * @param[in] argv  A string: "<varname> <operation> [<format>]"
  *   <varname> is name of a variable occuring in "cvv" containing filename
  *   <operation> : merge or replace
  *   <format>  "text"|"xml"|"json"|"cli"|"netconf" (see format_enum)
- * 
- * @note that "filename" is local on client filesystem not backend. 
+ * @retval    0     OK
+ * @retval   -1     Error
+ *
+ * @note that "filename" is local on client filesystem not backend.
  * @note file is assumed to have a dummy top-tag, eg <clicon></clicon>
  * @code
  *   # cligen spec
@@ -874,9 +990,9 @@ compare_dbs(clicon_handle h,
  * @endcode
  * @see save_config_file
  */
-int 
-load_config_file(clicon_handle h, 
-                 cvec         *cvv, 
+int
+load_config_file(clixon_handle h,
+                 cvec         *cvv,
                  cvec         *argv)
 {
     int              ret = -1;
@@ -893,47 +1009,47 @@ load_config_file(clicon_handle h,
     char            *formatstr = NULL;
     enum format_enum format = FORMAT_XML;
     yang_stmt       *yspec;
-    cxobj           *xerr = NULL; 
+    cxobj           *xerr = NULL;
     char            *lineptr = NULL;
 
     if (cvec_len(argv) < 2 || cvec_len(argv) > 4){
-        clicon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected: <dbname>,<varname>[,<format>]",
+        clixon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected: <dbname>,<varname>[,<format>]",
                    cvec_len(argv));
         goto done;
     }
     if ((yspec = clicon_dbspec_yang(h)) == NULL){
-        clicon_err(OE_FATAL, 0, "No DB_SPEC");
+        clixon_err(OE_FATAL, 0, "No DB_SPEC");
         goto done;
     }
     if (cvec_len(argv) > 2){
         formatstr = cv_string_get(cvec_i(argv, 2));
         if ((int)(format = format_str2int(formatstr)) < 0){
-            clicon_err(OE_PLUGIN, 0, "Not valid format: %s", formatstr);
+            clixon_err(OE_PLUGIN, 0, "Not valid format: %s", formatstr);
             goto done;
         }
     }
     varstr = cv_string_get(cvec_i(argv, 0));
     opstr  = cv_string_get(cvec_i(argv, 1));
-    if (strcmp(opstr, "merge") == 0) 
+    if (strcmp(opstr, "merge") == 0)
         replace = 0;
-    else if (strcmp(opstr, "replace") == 0) 
+    else if (strcmp(opstr, "replace") == 0)
         replace = 1;
     else{
-        clicon_err(OE_PLUGIN, 0, "No such op: %s, expected merge or replace", opstr);   
+        clixon_err(OE_PLUGIN, 0, "No such op: %s, expected merge or replace", opstr);
         goto done;
     }
     if ((cv = cvec_find(cvv, varstr)) == NULL){
-        clicon_err(OE_PLUGIN, 0, "No such var name: %s", varstr);       
+        clixon_err(OE_PLUGIN, 0, "No such var name: %s", varstr);
         goto done;
     }
     filename = cv_string_get(cv);
     if (stat(filename, &st) < 0){
-        clicon_err(OE_UNIX, errno, "load_config: stat(%s)", filename);
+        clixon_err(OE_UNIX, errno, "load_config: stat(%s)", filename);
         goto done;
     }
     /* Open and parse local file into xml */
     if ((fp = fopen(filename, "r")) == NULL){
-        clicon_err(OE_UNIX, errno, "fopen(%s)", filename);
+        clixon_err(OE_UNIX, errno, "fopen(%s)", filename);
         goto done;
     }
     switch (format){
@@ -941,7 +1057,8 @@ load_config_file(clicon_handle h,
         if ((ret = clixon_xml_parse_file(fp, YB_NONE, yspec, &xt, &xerr)) < 0)
             goto done;
         if (ret == 0){
-            clixon_netconf_error(xerr, "Loading", filename);
+            if (clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Loading %s", filename) < 0)
+                goto done;
             goto done;
         }
         break;
@@ -949,18 +1066,20 @@ load_config_file(clicon_handle h,
         if ((ret = clixon_json_parse_file(fp, 1, YB_NONE, yspec, &xt, &xerr)) < 0)
             goto done;
         if (ret == 0){
-            clixon_netconf_error(xerr, "Loading", filename);
+            if (clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Loading %s", filename) < 0)
+                goto done;
             goto done;
         }
         break;
     case FORMAT_TEXT:
-        /* text parser requires YANG and since load/save files have a "config" top-level 
+        /* text parser requires YANG and since load/save files have a "config" top-level
          * the yang-bind parameter must be YB_MODULE_NEXT
          */
         if ((ret = clixon_text_syntax_parse_file(fp, YB_MODULE_NEXT, yspec, &xt, &xerr)) < 0)
             goto done;
         if (ret == 0){
-            clixon_netconf_error(xerr, "Loading", filename);
+            if (clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Loading %s", filename) < 0)
+                goto done;
             goto done;
         }
         break;
@@ -975,13 +1094,13 @@ load_config_file(clicon_handle h,
                 lineptr = NULL; n = 0;
                 if (getline(&lineptr, &n, fp) < 0){
                     if (errno){
-                        clicon_err(OE_UNIX, errno, "getline");
+                        clixon_err(OE_UNIX, errno, "getline");
                         goto done;
                     }
                     goto ok; /* eof, skip backend rpc since this is done by cli code */
                 }
                 if (clicon_parse(h, lineptr, &mode, &result, &evalresult) < 0)
-                    goto done;  
+                    goto done;
                 if (result != 1) /* Not unique match */
                     goto done;
                 if (evalresult < 0)
@@ -994,23 +1113,25 @@ load_config_file(clicon_handle h,
             break;
         }
     default:
-        clicon_err(OE_PLUGIN, 0, "format: %s not implemented", formatstr);
+        clixon_err(OE_PLUGIN, 0, "format: %s not implemented", formatstr);
         goto done;
         break;
     }
     if (xt == NULL)
         goto done;
-    if ((cbxml = cbuf_new()) == NULL)
+    if ((cbxml = cbuf_new()) == NULL){
+        clixon_err(OE_UNIX, errno, "cbuf_new");
         goto done;
+    }
     x = NULL;
-    while ((x = xml_child_each(xt, x, -1)) != NULL) {
+    while ((x = xml_child_each(xt, x, CX_ELMNT)) != NULL) {
         /* Read as datastore-top but transformed into an edit-config "config" */
         xml_name_set(x, NETCONF_INPUT_CONFIG);
     }
-    if (clixon_xml2cbuf(cbxml, xt, 0, 0, -1, 1) < 0)
+    if (clixon_xml2cbuf(cbxml, xt, 0, 0, NULL, -1, 1) < 0)
         goto done;
     if (clicon_rpc_edit_config(h, "candidate",
-                               replace?OP_REPLACE:OP_MERGE, 
+                               replace?OP_REPLACE:OP_MERGE,
                                cbuf_get(cbxml)) < 0)
         goto done;
  ok:
@@ -1019,7 +1140,7 @@ load_config_file(clicon_handle h,
     if (cbxml)
         cbuf_free(cbxml);
     if (lineptr)
-        free(lineptr); 
+        free(lineptr);
    if (xerr)
         xml_free(xerr);
     if (xt)
@@ -1032,12 +1153,14 @@ load_config_file(clicon_handle h,
 /*! Copy database to local file as XMLn
  *
  * Utility function used by cligen spec file
- * @param[in] h     CLICON handle
- * @param[in] cvv  variable vector (containing <varname>)
- * @param[in] argv  a string: "<dbname> <varname> [<format>]" 
+ * @param[in] h     Clixon handle
+ * @param[in] cvv   Variable vector (containing <varname>)
+ * @param[in] argv  A string: "<dbname> <varname> [<format>]"
  *   <dbname>  is running, candidate, or startup
  *   <varname> is name of cligen variable in the "cvv" vector containing file name
  *   <format>  "text"|"xml"|"json"|"cli"|"netconf" (see format_enum)
+ * @retval     0     OK
+ * @retval    -1     Error
  * Note that "filename" is local on client filesystem not backend.
  * The function can run without a local database
  * @note The file is saved with dummy top-tag: clicon: <clicon></clicon>
@@ -1047,8 +1170,8 @@ load_config_file(clicon_handle h,
  * @see load_config_file
  */
 int
-save_config_file(clicon_handle h, 
-                 cvec         *cvv, 
+save_config_file(clixon_handle h,
+                 cvec         *cvv,
                  cvec         *argv)
 {
     int                retval = -1;
@@ -1065,38 +1188,39 @@ save_config_file(clicon_handle h,
     int                pretty = 1;     /* XXX hardcoded */
 
     if (cvec_len(argv) < 2 || cvec_len(argv) > 4){
-        clicon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected: <dbname>,<varname>[,<format>]",
+        clixon_err(OE_PLUGIN, EINVAL, "Received %d arguments. Expected: <dbname>,<varname>[,<format>]",
                    cvec_len(argv));
         goto done;
     }
     if (cvec_len(argv) > 2){
         formatstr = cv_string_get(cvec_i(argv, 2));
         if ((int)(format = format_str2int(formatstr)) < 0){
-            clicon_err(OE_PLUGIN, 0, "Not valid format: %s", formatstr);
+            clixon_err(OE_PLUGIN, 0, "Not valid format: %s", formatstr);
             goto done;
         }
     }
     dbstr = cv_string_get(cvec_i(argv, 0));
-    if (strcmp(dbstr, "running") != 0 && 
+    if (strcmp(dbstr, "running") != 0 &&
         strcmp(dbstr, "candidate") != 0 &&
         strcmp(dbstr, "startup") != 0) {
-        clicon_err(OE_PLUGIN, 0, "No such db name: %s", dbstr); 
+        clixon_err(OE_PLUGIN, 0, "No such db name: %s", dbstr);
         goto done;
     }
     varstr  = cv_string_get(cvec_i(argv, 1));
     if ((cv = cvec_find(cvv, varstr)) == NULL){
-        clicon_err(OE_PLUGIN, 0, "No such var name: %s", varstr);       
+        clixon_err(OE_PLUGIN, 0, "No such var name: %s", varstr);
         goto done;
     }
     filename = cv_string_get(cv);
     if (clicon_rpc_get_config(h, NULL, dbstr,"/", NULL, NULL, &xt) < 0)
         goto done;
     if (xt == NULL){
-        clicon_err(OE_CFG, 0, "get config: empty tree"); /* Shouldnt happen */
+        clixon_err(OE_CFG, 0, "get config: empty tree"); /* Shouldnt happen */
         goto done;
     }
     if ((xerr = xpath_first(xt, NULL, "/rpc-error")) != NULL){
-        clixon_netconf_error(xerr, "Get configuration", NULL);
+        if (clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Get configuration") < 0)
+            goto done;
         goto done;
     }
     /* get-config returns a <data> tree. Save as <config> tree so it can be used
@@ -1105,20 +1229,20 @@ save_config_file(clicon_handle h,
     if (xml_name_set(xt, DATASTORE_TOP_SYMBOL) < 0)
         goto done;
     if ((f = fopen(filename, "w")) == NULL){
-        clicon_err(OE_CFG, errno, "Creating file %s", filename);
+        clixon_err(OE_CFG, errno, "Creating file %s", filename);
         goto done;
-    } 
+    }
     switch (format){
     case FORMAT_XML:
-        if (clixon_xml2file(f, xt, 0, pretty, fprintf, 0, 1) < 0)
+        if (clixon_xml2file(f, xt, 0, pretty, NULL, fprintf, 0, 1) < 0)
             goto done;
         break;
     case FORMAT_JSON:
-        if (clixon_json2file(f, xt, pretty, fprintf, 0, 1) < 0)
+        if (clixon_json2file(f, xt, pretty, fprintf, 0, 1, 0) < 0)
             goto done;
         break;
     case FORMAT_TEXT:
-        if (clixon_txt2file(f, xt, 0, fprintf, 0, 1) < 0)
+        if (clixon_text2file(f, xt, 0, fprintf, 0, 1) < 0)
             goto done;
         break;
     case FORMAT_CLI:
@@ -1129,9 +1253,11 @@ save_config_file(clicon_handle h,
         fprintf(f, "<rpc xmlns=\"%s\" %s><edit-config><target><candidate/></target>",
                 NETCONF_BASE_NAMESPACE, NETCONF_MESSAGE_ID_ATTR);
         fprintf(f, "\n");
-        if (clixon_xml2file(f, xt, 0, pretty, fprintf, 0, 1) < 0)
+        if (clixon_xml2file(f, xt, 0, pretty, NULL, fprintf, 0, 1) < 0)
             goto done;
         fprintf(f, "</edit-config></rpc>]]>]]>\n");
+        break;
+    default:
         break;
     } /* switch */
     retval = 0;
@@ -1144,26 +1270,32 @@ save_config_file(clicon_handle h,
     return retval;
 }
 
-/*! Delete all elements in a database 
+/*! Delete all elements in a database
+ *
  * Utility function used by cligen spec file
+ * @param[in]  h     Clixon handle
+ * @param[in]  cvv   Vector of command variables
+ * @param[in]  argv
+ * @retval     0     OK
+ * @retval    -1     Error
  */
 int
-delete_all(clicon_handle h, 
-           cvec         *cvv, 
+delete_all(clixon_handle h,
+           cvec         *cvv,
            cvec         *argv)
 {
     char            *dbstr;
     int              retval = -1;
 
     if (cvec_len(argv) != 1){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires one element: dbname");
+        clixon_err(OE_PLUGIN, EINVAL, "Requires one element: dbname");
         goto done;
     }
     dbstr = cv_string_get(cvec_i(argv, 0));
-    if (strcmp(dbstr, "running") != 0 && 
+    if (strcmp(dbstr, "running") != 0 &&
         strcmp(dbstr, "candidate") != 0 &&
         strcmp(dbstr, "startup") != 0){
-        clicon_err(OE_PLUGIN, 0, "No such db name: %s", dbstr); 
+        clixon_err(OE_PLUGIN, 0, "No such db name: %s", dbstr);
         goto done;
     }
     if (clicon_rpc_delete_config(h, dbstr) < 0)
@@ -1176,19 +1308,22 @@ delete_all(clicon_handle h,
 /*! Discard all changes in candidate and replace with running
  */
 int
-discard_changes(clicon_handle h, 
-                cvec         *cvv, 
+discard_changes(clixon_handle h,
+                cvec         *cvv,
                 cvec         *argv)
 {
     return clicon_rpc_discard_changes(h);
 
 }
 /*! Copy from one database to another, eg running->startup
+ *
  * @param[in] argv  a string: "<db1> <db2>" Copy from db1 to db2
+ * @retval    0     OK
+ * @retval   -1     Error and logged to syslog
  */
 int
-db_copy(clicon_handle h, 
-        cvec         *cvv, 
+db_copy(clixon_handle h,
+        cvec         *cvv,
         cvec         *argv)
 {
     char *db1;
@@ -1200,47 +1335,43 @@ db_copy(clicon_handle h,
 }
 
 /*! This is the callback used by cli_setlog to print log message in CLI
+ *
  * param[in]  s    UNIX socket from backend  where message should be read
  * param[in]  arg  format: txt, xml, xml2txt, xml2json
+ * @retval    0    OK
+ * @retval   -1    Error
  */
 static int
-cli_notification_cb(int   s, 
+cli_notification_cb(int   s,
                     void *arg)
 {
-    struct clicon_msg *reply = NULL;
-    int                eof;
     int                retval = -1;
+    int                eof = 0;
     cxobj             *xt = NULL;
-    enum format_enum   format = (enum format_enum)arg;
-    int                ret;
-    
-    /* get msg (this is the reason this function is called) */
-    if (clicon_msg_rcv(s, &reply, &eof) < 0)
+    enum format_enum   format = (enum format_enum)(uintptr_t)arg;
+    cbuf              *cb = NULL;
+
+    if (clixon_msg_rcv11(s, NULL, 0, &cb, &eof) < 0)
         goto done;
     if (eof){
-        clicon_err(OE_PROTO, ESHUTDOWN, "Socket unexpected close");
+        clixon_err(OE_PROTO, ESHUTDOWN, "Socket unexpected close");
         close(s);
         errno = ESHUTDOWN;
         clixon_event_unreg_fd(s, cli_notification_cb);
         goto done;
     }
-    /* XXX pass yang_spec and use xerr*/
-    if ((ret = clicon_msg_decode(reply, NULL, NULL, &xt, NULL)) < 0) 
+    if (clixon_xml_parse_string(cbuf_get(cb), YB_NONE, NULL, &xt, NULL) < 0)
         goto done;
-    if (ret == 0){ /* will not happen since no yspec ^*/
-        clicon_err(OE_NETCONF, EFAULT, "Notification malformed");
-        goto done;
-    }
     switch (format){
     case FORMAT_JSON:
-        if (clixon_json2file(stdout, xt, 1, cligen_output, 1, 1) < 0)
+        if (clixon_json2file(stdout, xt, 1, cligen_output, 1, 1, 0) < 0)
             goto done;
     case FORMAT_TEXT:
-        if (clixon_txt2file(stdout, xt, 0, cligen_output, 1, 1) < 0)
+        if (clixon_text2file(stdout, xt, 0, cligen_output, 1, 1) < 0)
             goto done;
         break;
     case FORMAT_XML:
-        if (clixon_xml2file(stdout, xt, 0, 1, cligen_output, 1, 1) < 0)
+        if (clixon_xml2file(stdout, xt, 0, 1, NULL, cligen_output, 1, 1) < 0)
             goto done;
         break;
     default:
@@ -1248,39 +1379,40 @@ cli_notification_cb(int   s,
     }
     retval = 0;
   done:
+    if (cb)
+        cbuf_free(cb);
     if (xt)
         xml_free(xt);
-    if (reply)
-        free(reply);
     return retval;
 }
 
 /*! Make a notify subscription to backend and un/register callback for return messages.
- * 
- * @param[in] h      Clicon handle
+ *
+ * @param[in] h      Clixon handle
  * @param[in] cvv    Not used
  * @param[in] arg    A string with <log stream name> <stream status> [<format>]
  * where <status> is "0" or "1"
  * and   <format> is XXX
+ * @retval    0      OK
+ * @retval   -1      Error
  * Example code: Start logging of mystream and show logs as xml
  * @code
- * cmd("comment"), cli_notify("mystream","1","xml"); 
+ * cmd("comment"), cli_notify("mystream","1","xml");
  * @endcode
- * XXX: format is a memory leak
  */
 int
-cli_notify(clicon_handle h, 
-           cvec         *cvv, 
+cli_notify(clixon_handle h,
+           cvec         *cvv,
            cvec         *argv)
 {
-    char            *stream = NULL;
     int              retval = -1;
+    char            *stream = NULL;
     int              status;
     char            *formatstr = NULL;
     enum format_enum format = FORMAT_TEXT;
 
     if (cvec_len(argv) != 2 && cvec_len(argv) != 3){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires arguments: <logstream> <status> [<format>]");
+        clixon_err(OE_PLUGIN, EINVAL, "Requires arguments: <logstream> <status> [<format>]");
         goto done;
     }
     stream = cv_string_get(cvec_i(argv, 0));
@@ -1289,12 +1421,12 @@ cli_notify(clicon_handle h,
         formatstr = cv_string_get(cvec_i(argv, 2));
         format = format_str2int(formatstr);
     }
-    if (cli_notification_register(h, 
-                                  stream, 
+    if (cli_notification_register(h,
+                                  stream,
                                   format,
-                                  "", 
-                                  status, 
-                                  cli_notification_cb, 
+                                  "",
+                                  status,
+                                  cli_notification_cb,
                                   (void*)format) < 0)
         goto done;
 
@@ -1304,29 +1436,31 @@ cli_notify(clicon_handle h,
 }
 
 /*! Lock database
- * 
- * @param[in] h      Clicon handle
+ *
+ * @param[in] h      Clixon handle
  * @param[in] cvv    Not used
- * @param[in] arg    A string with <database> 
+ * @param[in] arg    A string with <database>
+ * @retval    0      OK
+ * @retval   -1      Error
  * @code
- * lock("comment"), cli_lock("running"); 
+ * lock("comment"), cli_lock("running");
  * @endcode
  * XXX: format is a memory leak
  */
 int
-cli_lock(clicon_handle h, 
-         cvec         *cvv, 
+cli_lock(clixon_handle h,
+         cvec         *cvv,
          cvec         *argv)
 {
-    char            *db;
     int              retval = -1;
+    char            *db;
 
     if (cvec_len(argv) != 1){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires arguments: <db>");
+        clixon_err(OE_PLUGIN, EINVAL, "Requires arguments: <db>");
         goto done;
     }
     db = cv_string_get(cvec_i(argv, 0));
-    if (clicon_rpc_lock(h, db) < 0) 
+    if (clicon_rpc_lock(h, db) < 0)
         goto done;
     retval = 0;
   done:
@@ -1334,30 +1468,68 @@ cli_lock(clicon_handle h,
 }
 
 /*! Unlock database
- * 
- * @param[in] h      Clicon handle
+ *
+ * @param[in] h      Clixon handle
  * @param[in] cvv    Not used
- * @param[in] arg    A string with <database> 
+ * @param[in] arg    A string with <database>
+ * @retval    0      OK
+ * @retval   -1      Error
  * @code
- * lock("comment"), cli_lock("running"); 
+ * lock("comment"), cli_unlock("running");
  * @endcode
  * XXX: format is a memory leak
  */
 int
-cli_unlock(clicon_handle h, 
-           cvec         *cvv, 
+cli_unlock(clixon_handle h,
+           cvec         *cvv,
            cvec         *argv)
 {
-    char            *db;
     int              retval = -1;
+    char            *db;
 
     if (cvec_len(argv) != 1){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires arguments: <db>");
+        clixon_err(OE_PLUGIN, EINVAL, "Requires arguments: <db>");
         goto done;
     }
     db = cv_string_get(cvec_i(argv, 0));
-    if (clicon_rpc_unlock(h, db) < 0) 
+    if (clicon_rpc_unlock(h, db) < 0)
         goto done;
+    retval = 0;
+  done:
+    return retval;
+}
+
+/*! Kill session
+ *
+ * @param[in] h      Clixon handle
+ * @param[in] cvv    Not used
+ * @param[in] arg    variabel w session nr
+ * @retval    0      OK
+ * @retval   -1      Error
+ * @code
+ *   <sessid:uint32> lock("comment"), cli_kill_session("sessid");
+ * @endcode
+ */
+int
+cli_kill_session(clixon_handle h,
+                 cvec         *cvv,
+                 cvec         *argv)
+{
+    int      retval = -1;
+    char    *var;
+    uint32_t session_id;
+    cg_var  *cv;
+
+    if (cvec_len(argv) != 1){
+        clixon_err(OE_PLUGIN, EINVAL, "Requires arguments: varname");
+        goto done;
+    }
+    if ((var = cv_string_get(cvec_i(argv, 0))) != NULL){
+        if ((cv = cvec_find_var(cvv, var)) != NULL)
+            if ((session_id = cv_uint32_get(cv)) != 0)
+                if (clicon_rpc_kill_session(h, session_id) < 0)
+                    goto done;
+    }
     retval = 0;
   done:
     return retval;
@@ -1366,17 +1538,19 @@ cli_unlock(clicon_handle h,
 /*! Copy one configuration object to antother
  *
  * Works for objects that are items in a yang list with a keyname, eg as:
- *   list sender{ 
- *      key name;       
+ *   list sender{
+ *      key name;
  *      leaf name{...
  *
- * @param[in]  h    CLICON handle
+ * @param[in]  h    Clixon handle
  * @param[in]  cvv  Vector of variables from CLIgen command-line
  * @param[in]  argv Vector: <db>, <xpath>, <field>, <fromvar>, <tovar>
+ * @retval     0    OK
+ * @retval    -1    Error
  * Explanation of argv fields:
  *  db:        Database name, eg candidate|tmp|startup
- *  xpath:     XPATH expression with exactly two %s pointing to field and from name
- *  namespace: XPATH default namespace
+ *  xpath:     XPath expression with exactly two %s pointing to field and from name
+ *  namespace: XPath default namespace
  *  field:     Name of list key, eg name
  *  fromvar:   Name of variable containing name of object to copy from (given by xpath)
  *  tovar:     Name of variable containing name of object to copy to.
@@ -1388,14 +1562,14 @@ cli_unlock(clicon_handle h,
  * @endcode
  */
 int
-cli_copy_config(clicon_handle h, 
-                cvec         *cvv, 
+cli_copy_config(clixon_handle h,
+                cvec         *cvv,
                 cvec         *argv)
 {
     int          retval = -1;
     char        *db;
-    cxobj       *x1 = NULL; 
-    cxobj       *x2 = NULL; 
+    cxobj       *x1 = NULL;
+    cxobj       *x2 = NULL;
     cxobj       *x;
     char        *xpath;
     char        *namespace;
@@ -1414,7 +1588,7 @@ cli_copy_config(clicon_handle h,
     size_t       len;
 
     if (cvec_len(argv) != 6){
-        clicon_err(OE_PLUGIN, EINVAL, "Requires 6 elements: <db> <xpath> <namespace> <keyname> <from> <to>");
+        clixon_err(OE_PLUGIN, EINVAL, "Requires 6 elements: <db> <xpath> <namespace> <keyname> <from> <to>");
         goto done;
     }
     /* First argv argument: Database */
@@ -1429,17 +1603,17 @@ cli_copy_config(clicon_handle h,
     fromvar = cv_string_get(cvec_i(argv, 4));
     /* Fifth argv argument: to variable */
     tovar = cv_string_get(cvec_i(argv, 5));
-    
+
     /* Get from variable -> cv -> from name */
     if ((fromcv = cvec_find(cvv, fromvar)) == NULL){
-        clicon_err(OE_PLUGIN, 0, "fromvar '%s' not found in cligen var list", fromvar); 
+        clixon_err(OE_PLUGIN, 0, "fromvar '%s' not found in cligen var list", fromvar);
         goto done;
     }
     /* Get from name from cv */
     fromname = cv_string_get(fromcv);
     /* Create xpath */
     if ((cb = cbuf_new()) == NULL){
-        clicon_err(OE_PLUGIN, errno, "cbuf_new");       
+        clixon_err(OE_PLUGIN, errno, "cbuf_new");
         goto done;
     }
     /* Sanity check that xpath contains exactly two %s, ie [%s='%s'] */
@@ -1450,23 +1624,24 @@ cli_copy_config(clicon_handle h,
             j++;
     }
     if (j != 2){
-        clicon_err(OE_PLUGIN, 0, "xpath '%s' does not have two '%%'", xpath);   
+        clixon_err(OE_PLUGIN, 0, "xpath '%s' does not have two '%%'", xpath);
         goto done;
     }
-    cprintf(cb, xpath, keyname, fromname);      
+    cprintf(cb, xpath, keyname, fromname);
     if ((nsc = xml_nsctx_init(NULL, namespace)) == NULL)
         goto done;
     /* Get from object configuration and store in x1 */
     if (clicon_rpc_get_config(h, NULL, db, cbuf_get(cb), nsc, NULL, &x1) < 0)
         goto done;
     if ((xerr = xpath_first(x1, NULL, "/rpc-error")) != NULL){
-        clixon_netconf_error(xerr, "Get configuration", NULL);
+        if (clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Get configuration") < 0)
+            goto done;
         goto done;
     }
 
     /* Get to variable -> cv -> to name */
     if ((tocv = cvec_find(cvv, tovar)) == NULL){
-        clicon_err(OE_PLUGIN, 0, "tovar '%s' not found in cligen var list", tovar);
+        clixon_err(OE_PLUGIN, 0, "tovar '%s' not found in cligen var list", tovar);
         goto done;
     }
     toname = cv_string_get(tocv);
@@ -1476,10 +1651,9 @@ cli_copy_config(clicon_handle h,
     if (xml_copy(x1, x2) < 0)
         goto done;
     xml_name_set(x2, NETCONF_INPUT_CONFIG);
-    cprintf(cb, "/%s", keyname);        
-
+    cprintf(cb, "/%s", keyname);
     if ((x = xpath_first(x2, nsc, "%s", cbuf_get(cb))) == NULL){
-        clicon_err(OE_PLUGIN, 0, "Field %s not found in copy tree", keyname);
+        clixon_err(OE_PLUGIN, 0, "Field %s not found in copy tree", keyname);
         goto done;
     }
     x = xml_find(x, "body");
@@ -1487,7 +1661,7 @@ cli_copy_config(clicon_handle h,
     /* resuse cb */
     cbuf_reset(cb);
     /* create xml copy tree and merge it with database configuration */
-    if (clixon_xml2cbuf(cb, x2, 0, 0, -1, 0) < 0)
+    if (clixon_xml2cbuf(cb, x2, 0, 0, NULL, -1, 0) < 0)
         goto done;
     if (clicon_rpc_edit_config(h, db, OP_MERGE, cbuf_get(cb)) < 0)
         goto done;
@@ -1504,8 +1678,18 @@ cli_copy_config(clicon_handle h,
     return retval;
 }
 
+/*! CLI support function for printing comment/help string
+ *
+ * @param[in] h      Clixon handle
+ * @param[in] cvv    Not used
+ * @param[in] arg    A string with <database>
+ * @retval    0      OK
+ * @retval   -1      Error
+ */
 int
-cli_help(clicon_handle h, cvec *vars, cvec *argv)
+cli_help(clixon_handle h,
+         cvec         *cvv,
+         cvec         *argv)
 {
     cligen_handle ch = cli_cligen(h);
     parse_tree   *pt;
@@ -1516,17 +1700,19 @@ cli_help(clicon_handle h, cvec *vars, cvec *argv)
 
 /*! CLI support function for restarting a plugin
  *
- * @param[in] h      Clicon handle
+ * @param[in] h      Clixon handle
  * @param[in] cvv    Not used
- * @param[in] arg    A string with <database>  
+ * @param[in] arg    A string with <database>
+ * @retval    0      OK
+ * @retval   -1      Error
  * @code
- * restart("comment") , cli_restart_plugin("myplugin", "restart"); 
+ * restart("comment") , cli_restart_plugin("myplugin", "restart");
  * @endcode
  */
-int 
-cli_restart_plugin(clicon_handle h,
+int
+cli_restart_plugin(clixon_handle h,
                    cvec         *cvv,
-            cvec         *argv)
+                   cvec         *argv)
 {
     int     retval = -1;
     cg_var *cv;
@@ -1534,14 +1720,390 @@ cli_restart_plugin(clicon_handle h,
 
     if ((cv = cvec_find_var(cvv, "plugin")) == NULL){
         if (cvec_len(argv) != 1){
-            clicon_err(OE_PLUGIN, EINVAL, "Requires plugin variable");
+            clixon_err(OE_PLUGIN, EINVAL, "Requires plugin variable");
             goto done;
         }
         cv = cvec_i(argv, 0);
     }
     plugin = cv_string_get(cv);
-    retval = clicon_rpc_restart_plugin(h, plugin);    
+    retval = clicon_rpc_restart_plugin(h, plugin);
  done:
     return retval;
 }
 
+/* Append cvv1 to cvv0 and return a new cvec
+ *
+ * @param[in] cvv0  First cvv
+ * @param[in] cvv1  Second cvv
+ * @retval    cvv   New cvv, free with cvec_free
+ * @retval    NULL  Error
+ * @note if cvv0 is non-null, the first element of cvv1 is skipped
+ */
+cvec*
+cvec_append(cvec *cvv0,
+            cvec *cvv1)
+{
+    cvec   *cvv2 = NULL;
+    cg_var *cv;
+
+    if (cvv0 == NULL){
+        if ((cvv2 = cvec_dup(cvv1)) == NULL){
+            clixon_err(OE_UNIX, errno, "cvec_dup");
+            return NULL;
+        }
+    }
+    else{
+        if ((cvv2 = cvec_dup(cvv0)) == NULL){
+            clixon_err(OE_UNIX, errno, "cvec_dup");
+            return NULL;
+        }
+        cv = NULL;      /* Append cvv1 to cvv2 */
+        while ((cv = cvec_each1(cvv1, cv)) != NULL)
+            cvec_append_var(cvv2, cv);
+    }
+    return cvv2;
+}
+
+/*! Concatenate all strings in a cvec into a single string
+ *
+ * @param[in]  cvv    Input vector
+ * @param[out] appstr Concatenated string as existing cbuf
+ * @retval     0      OK
+ * @retval    -1      Error
+ */
+int
+cvec_concat_cb(cvec  *cvv,
+               cbuf  *cb)
+{
+    int     retval = -1;
+    int     argc;
+    cg_var *cv;
+    char   *str;
+    int     i;
+
+    if (cb == NULL){
+        clixon_err(OE_PLUGIN, EINVAL, "cb is NULL");
+        goto done;
+    }
+    /* Iterate through all api_path_fmt:s, assume they start with / */
+    for (argc=0; argc<cvec_len(cvv); argc++){
+        cv = cvec_i(cvv, argc);
+        str = cv_string_get(cv);
+        if (str[0] != '/')
+            break;
+    }
+    /* Append a api_path_fmt from sub-parts */
+    for (i=argc-1; i>=0; i--){
+        cv = cvec_i(cvv, i);
+        str = cv_string_get(cv);
+        cprintf(cb, "%s", str);
+    }
+    retval = 0;
+ done:
+    return retval;
+}
+
+/*! Process control as defined by clixon-lib API
+ *
+ * @param[in] h      Clixon handle
+ * @param[in] cvv    Not used
+ * @param[in] arg    Two strings: <process name> <process operation>
+ * @retval    0      OK
+ * @retval   -1      Error
+ * @code
+ *   actions-daemon("Actions daemon operations") start,
+ *           cli_process_control("Action process", "start");
+ * @endcode
+ */
+int
+cli_process_control(clixon_handle h,
+                    cvec         *cvv,
+                    cvec         *argv)
+{
+    int            retval = -1;
+    char          *name;
+    char          *opstr;
+    cbuf          *cb = NULL;
+    cxobj         *xret = NULL;
+    cxobj         *xerr;
+
+    if (cvec_len(argv) != 2){
+        clixon_err(OE_PLUGIN, EINVAL, "Requires two element: process name and operation");
+        goto done;
+    }
+    name = cv_string_get(cvec_i(argv, 0));
+    opstr = cv_string_get(cvec_i(argv, 1));
+    if (clixon_process_op_str2int(opstr) == -1){
+        clixon_err(OE_UNIX, 0, "No such process op: %s", opstr);
+        goto done;
+    }
+    if ((cb = cbuf_new()) == NULL){
+        clixon_err(OE_UNIX, errno, "cbuf_new");
+        goto done;
+    }
+    cprintf(cb, "<rpc xmlns=\"%s\" username=\"%s\" %s>",
+            NETCONF_BASE_NAMESPACE,
+            clicon_username_get(h),
+            NETCONF_MESSAGE_ID_ATTR);
+    cprintf(cb, "<process-control xmlns=\"%s\">", CLIXON_LIB_NS);
+    cprintf(cb, "<name>%s</name>", name);
+    cprintf(cb, "<operation>%s</operation>", opstr);
+    cprintf(cb, "</process-control>");
+    cprintf(cb, "</rpc>");
+    if (clicon_rpc_netconf(h, cbuf_get(cb), &xret, NULL) < 0)
+        goto done;
+    if ((xerr = xpath_first(xret, NULL, "//rpc-error")) != NULL){
+        clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Get configuration");
+        goto done;
+    }
+    if (clixon_xml2file(stdout, xml_child_i(xret, 0), 0, 1, NULL, cligen_output, 0, 1) < 0)
+        goto done;
+    retval = 0;
+ done:
+    if (xret)
+        xml_free(xret);
+    if (cb)
+        cbuf_free(cb);
+    return retval;
+}
+
+int
+cli_ping(clixon_handle h,
+         cvec         *cvv,
+         cvec         *argv)
+{
+    int            retval = -1;
+    cbuf          *cb = NULL;
+    cxobj         *xret = NULL;
+    cxobj         *xerr;
+
+    if ((cb = cbuf_new()) == NULL){
+        clixon_err(OE_UNIX, errno, "cbuf_new");
+        goto done;
+    }
+    cprintf(cb, "<rpc xmlns=\"%s\" username=\"%s\" %s>",
+            NETCONF_BASE_NAMESPACE,
+            clicon_username_get(h),
+            NETCONF_MESSAGE_ID_ATTR);
+    cprintf(cb, "<ping xmlns=\"%s\"/>", CLIXON_LIB_NS);
+    cprintf(cb, "</rpc>");
+    if (clicon_rpc_netconf(h, cbuf_get(cb), &xret, NULL) < 0)
+        goto done;
+    if ((xerr = xpath_first(xret, NULL, "//rpc-error")) != NULL){
+        clixon_err_netconf(h, OE_NETCONF, 0, xerr, "Get configuration");
+        goto done;
+    }
+    if (clixon_xml2file(stdout, xml_child_i(xret, 0), 0, 1, NULL, cligen_output, 0, 1) < 0)
+        goto done;
+    retval = 0;
+ done:
+    if (xret)
+        xml_free(xret);
+    if (cb)
+        cbuf_free(cb);
+    return retval;
+}
+
+/*! Alias function
+ *
+ * @param[in]  h     Clixon handle
+ * @param[in]  cvv   Vector of variables: function parameters
+ * @param[in]  argv  Arguments given at the callback: this is the command to be executed
+ * @retval     0     OK
+ * @retval    -1     Error
+ * @see cliread_eval  original fn
+ */
+int
+cli_alias_call(cligen_handle h,
+               cvec         *cvv,
+               cvec         *argv)
+{
+    return cligen_alias_call(cli_cligen(h), cvv, argv);
+}
+
+/*! Define an alias CLI command, insert in top-level of parse-tree
+ *
+ * @param[in]  h     Clixon handle
+ * @param[in]  cvv   Vector of variables: function parameters
+ * @param[in]  argv   Arguments given at the callback: <name> <command> [<treename>]
+ *   <name>    Name of variable containing alias name
+ *   <command> Name of variable containing alias command
+ *   <treename> Optional name of treename (mode), default is active pt
+ * @retval     0     OK
+ * @retval    -1     Error
+ * @code
+ *   alias <name:string> <command:rest>, alias_cb("name", "command");
+ * @endcode
+ * @see cli_aliasref_add  add using a tree reference
+ */
+int
+cli_alias_add(clixon_handle h,
+              cvec         *cvv,
+              cvec         *argv)
+{
+    int     retval = -1;
+    char   *cvname;
+    char   *cvcommand;
+    cg_var *cv;
+    char   *name;
+    char   *command;
+    char   *treename = NULL;
+    int     argi = 0;
+
+    if (argv == NULL || cvec_len(argv) < 2 || cvec_len(argv) > 3){
+        clixon_err(OE_PLUGIN, EINVAL, "Expected arguments: <name> <command> [<ptname>]");
+        goto done;
+    }
+    /* Indirectopn of name argument */
+    if ((cvname = cvec_i_str(argv, argi++)) == NULL){
+        clixon_err(OE_PLUGIN, 0, "No <name> argument");
+        goto done;
+    }
+    if ((cv = cvec_find_var(cvv, cvname)) == NULL){
+        clixon_err(OE_PLUGIN, 0, "Expected name argument");
+        goto done;
+    }
+    else
+        name = cv_string_get(cv);
+    /* Indirection of command argument */
+    if ((cvcommand = cvec_i_str(argv, argi++)) == NULL){
+        clixon_err(OE_PLUGIN, 0, "No <command> argument");
+        goto done;
+    }
+    if ((cv = cvec_find_var(cvv, cvcommand)) == NULL){
+        clixon_err(OE_PLUGIN, 0, "Expected command argument");
+        goto done;
+    }
+    else
+        command = cv_string_get(cv);
+    /* Optional parse-tree name argument */
+    if (cvec_len(argv) > argi)
+        treename = cvec_i_str(argv, argi++);
+    if (cligen_alias_add(cli_cligen(h), treename, name, NULL, command, cli_alias_call) < 0){
+        clixon_err(OE_PLUGIN, errno, "Error adding alias %s", name);
+        goto done;
+    }
+    retval = 0;
+ done:
+    return retval;
+}
+
+/*! Define an alias CLI command via a tree refernce, insert in top-level of parse-tree
+ *
+ * @param[in]  h     Clixon handle
+ * @param[in]  cvv   Vector of variables: function parameters
+ * @param[in]  argv   Arguments given at the callback: <name>
+ *   <name>    Name of variable containing alias name
+ * @retval     0     OK
+ * @retval    -1     Error
+ * @code
+ *   aliasref <name:string> , aliasref_cb("name");
+ * @endcode
+ * @see cli_alias_add  add a constant string command
+ * @note  Not generic implementation, assumes cmd string: <cmd> <name> <rest>
+ */
+int
+cli_aliasref_add(clixon_handle h,
+                 cvec         *cvv,
+                 cvec         *argv)
+{
+    int     retval = -1;
+    cg_var *cv;
+    char   *name;
+    char   *command =NULL;
+    char   *treename = NULL;
+
+    /* argv handling is ad-hoc, unkown argv list */
+    if ((cv = cvec_find_var(cvv, "name")) == NULL){
+        clixon_err(OE_PLUGIN, 0, "Expected name argument");
+        goto done;
+    }
+    else
+        name = cv_string_get(cv);
+    if ((command = cvec_i_str(cvv, 0)) == NULL){
+        clixon_err(OE_PLUGIN, 0, "Expected cvv[0]");
+        goto done;
+    }
+    /* skip fisrt two elements */
+    if ((command = index(command, ' ')) == NULL) {
+        clixon_err(OE_PLUGIN, 0, "No command string");
+        goto done;
+    }
+    command++;
+    if ((command = index(command, ' ')) == NULL) {
+        clixon_err(OE_PLUGIN, 0, "No command string");
+        goto done;
+    }
+    command++;
+    if (cligen_alias_add(cli_cligen(h), treename, name, NULL, command, cli_alias_call) < 0){
+        clixon_err(OE_PLUGIN, errno, "Error adding alias %s", name);
+        goto done;
+    }
+    retval = 0;
+ done:
+    return retval;
+}
+
+int
+cli_alias_show(clixon_handle h,
+               cvec         *cvv,
+               cvec         *argv)
+{
+    int           retval = -1;
+    pt_head      *ph;
+    char         *phname = NULL;
+    cligen_handle ch = cli_cligen(h);
+    int           i;
+    cg_obj       *co;
+    parse_tree   *pt;
+    cg_callback  *cc;
+    cg_var       *cv;
+    cbuf         *cb = NULL;
+
+    if ((cb = cbuf_new()) == NULL){
+        clixon_err(OE_UNIX, errno, "cbuf_new");
+        goto done;
+    }
+    if (phname == NULL) {
+        if ((ph = cligen_ph_active_get(ch)) == NULL){
+            errno = ENOENT;
+            goto done;
+        }
+    }
+    else {
+        if ((ph = cligen_ph_find(ch, phname)) == NULL) {
+            errno = ENOENT;
+            goto done;
+        }
+    }
+    if ((pt = cligen_ph_parsetree_get(ph)) == NULL){
+        errno = ENOENT;
+        goto done;
+    }
+    for (i=0; i<pt_len_get(pt); i++){
+        if ((co = pt_vec_i_get(pt, i)) == NULL)
+            continue;
+        if (co->co_type == CO_EMPTY)
+            continue;
+        if (co_flags_get(co, CO_FLAGS_ALIAS) == 0x0)
+            continue;
+        cligen_output(stdout, "%s:", co->co_command);
+        if ((cc = co->co_callbacks) != NULL && cc->cc_cvec){
+            cbuf_reset(cb);
+            cv = NULL;
+            while ((cv = cvec_each(cc->cc_cvec, cv)) != NULL) {
+                cprintf(cb, " ");
+                if (cv2cbuf(cv, cb) < 0){
+                    clixon_err(OE_UNIX, errno, "cv2cbuf");
+                    goto done;
+                }
+            }
+            cligen_output(stdout, "%s\n", cbuf_get(cb));
+        }
+    }
+    retval = 0;
+ done:
+    if (cb)
+        cbuf_free(cb);
+    return retval;
+}

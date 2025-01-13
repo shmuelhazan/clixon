@@ -7,6 +7,7 @@
 # Notes:
 # 1. May tests without "new" which makes it difficult to debug
 # 2. Sleeps are difficult when running valgrind tests when startup times (eg netconf) increase
+# Occasionally fails (non-determinisitic) when asserting running, see marked TIMEOUT? below
 
 # Magic line must be first in script (see README.md)
 s="$_" ; . ./lib.sh || if [ "$s" = $0 ]; then exit 0; else return 0; fi
@@ -22,6 +23,9 @@ USER=${BUSER}
 
 # Define default restconfig config: RESTCONFIG
 RESTCONFIG=$(restconf_config none false)
+if [ $? -ne 0 ]; then
+    err1 "Error when generating certs"
+fi
 
 cat <<EOF > $cfg
 <clixon-config xmlns="http://clicon.org/config">
@@ -34,7 +38,7 @@ cat <<EOF > $cfg
   <CLICON_CLI_DIR>/usr/local/lib/$APPNAME/cli</CLICON_CLI_DIR>
   <CLICON_CLI_MODE>$APPNAME</CLICON_CLI_MODE>
   <CLICON_SOCK>$dir/$APPNAME.sock</CLICON_SOCK>
-  <CLICON_BACKEND_PIDFILE>/usr/local/var/$APPNAME/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
+  <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>/usr/local/var/$APPNAME</CLICON_XMLDB_DIR>
   <CLICON_BACKEND_USER>$USER</CLICON_BACKEND_USER>
   <CLICON_BACKEND_PRIVILEGES>drop_perm</CLICON_BACKEND_PRIVILEGES>
@@ -180,9 +184,10 @@ rpc "<cancel-commit><persist-id>ab</persist-id></cancel-commit>" "<ok/>"
 new "6. netconf persistent confirmed-commit with timeout"
 reset
 edit_config "candidate" "$CONFIGB"
-commit "<confirmed/><confirm-timeout>3</confirm-timeout><persist>abcd</persist>"
+# need 5 for valgrind netconf that takes a couple of seconds to finish
+commit "<confirmed/><confirm-timeout>5</confirm-timeout><persist>abcd</persist>"
 assert_config_equals "running" "$CONFIGB"
-sleep 3
+sleep 5
 assert_config_equals "running" ""
 
 ################################################################################
@@ -313,9 +318,7 @@ assert_config_equals "candidate" "$CONFIGB"
 # use HELLONO11 which uses older EOM framing
 sleep 60 |  cat <(echo "$HELLONO11<rpc $DEFAULTNS><commit><confirmed/><confirm-timeout>60</confirm-timeout></commit></rpc>]]>]]>") -| $clixon_netconf -qf $cfg  >> /dev/null &
 PIDS=($(jobs -l % | cut -c 6- | awk '{print $1}'))
-if [ $valgrindtest -eq 1 ]; then
-    sleep 1
-fi
+sleep 1 # TIMEOUT?
 assert_config_equals "running" "$CONFIGB"                       # assert config twice to prove it survives disconnect
 assert_config_equals "running" "$CONFIGB"                       # of ephemeral sessions
 
@@ -330,7 +333,7 @@ reset
 tmppipe=$(mktemp -u)
 mkfifo -m 600 "$tmppipe"
 
-cat << EOF | clixon_cli -f $cfg >> /dev/null &
+cat << EOF | $clixon_cli -f $cfg >> /dev/null &
 set table parameter eth0
 commit confirmed 60
 shell echo >> $tmppipe
@@ -350,7 +353,7 @@ rm $tmppipe
 new "14. cli persistent confirmed-commit"
 reset
 
-cat << EOF | clixon_cli -f $cfg >> /dev/null
+cat << EOF | $clixon_cli -f $cfg >> /dev/null
 set table parameter eth0
 commit confirmed persist a
 quit
@@ -358,7 +361,7 @@ EOF
 
 assert_config_equals "running" "$CONFIGB"
 
-cat << EOF | clixon_cli -f $cfg >> /dev/null
+cat << EOF | $clixon_cli -f $cfg >> /dev/null
 set table parameter eth1
 commit persist-id a confirmed persist ab
 quit
@@ -385,7 +388,7 @@ expectpart "$($clixon_cli -lo -1 -f $cfg commit persist-id ab cancel)" 255 "no c
 
 new "18. cli persistent confirmed-commit with timeout"
 reset
-cat << EOF | clixon_cli -f $cfg >> /dev/null
+cat << EOF | $clixon_cli -f $cfg >> /dev/null
 set table parameter eth0
 commit confirmed persist abcd 3
 EOF
@@ -397,13 +400,13 @@ assert_config_equals "running" ""
 
 new "19. cli persistent confirmed-commit with reset timeout"
 reset
-cat << EOF | clixon_cli -f $cfg >> /dev/null
+cat << EOF | $clixon_cli -f $cfg >> /dev/null
 set table parameter eth0
 commit confirmed persist abcd 5
 EOF
 
 assert_config_equals "running" "$CONFIGB"
-cat << EOF | clixon_cli -f $cfg >> /dev/null
+cat << EOF | $clixon_cli -f $cfg >> /dev/null
 set table parameter eth1
 commit persist-id abcd confirmed persist abcdef 10
 EOF
@@ -434,6 +437,7 @@ assert_config_equals "candidate" "$CONFIGB"
 # use HELLONO11 which uses older EOM framing
 sleep 60 |  cat <(echo "$HELLONO11<rpc $DEFAULTNS><commit><confirmed/><confirm-timeout>60</confirm-timeout></commit></rpc>]]>]]><rpc $DEFAULTNS><commit></commit></rpc>]]>]]>") -| $clixon_netconf -qf $cfg  >> /dev/null &
 PIDS=($(jobs -l % | cut -c 6- | awk '{print $1}'))
+sleep 1 # TIMEOUT?
 assert_config_equals "running" "$CONFIGB"                       # assert config twice to prove it surives disconnect
 
 new "restconf POST"
@@ -475,8 +479,7 @@ if [ $BE -ne 0 ]; then
     stop_backend -f $cfg
 fi
 
-# Set by restconf_config
-unset RESTCONFIG
+rm -rf $dir
 
 new "endtest"
 endtest
